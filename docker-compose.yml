@@ -1,0 +1,14 @@
+services:
+  bdtfc:
+    image: postgres:15
+    container_name: bdtfc
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - bdtfc_data:/var/lib/postgresql/data
+
+volumes:
+  bdtfc_data:

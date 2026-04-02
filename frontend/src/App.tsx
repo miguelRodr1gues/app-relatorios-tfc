@@ -1,21 +1,6 @@
-import { useEffect, useState } from "react";
+import { RouterProvider } from "react-router-dom";
+import { router } from "./routes";
 
-function App() {
-    const [mensagem, setMensagem] = useState("");
-
-    useEffect(() => {
-        fetch("http://localhost:8000/api/teste/")
-            .then((res) => res.json())
-            .then((data) => setMensagem(data.mensagem))
-            .catch((err) => console.error(err));
-    }, []);
-
-    return (
-        <div>
-            <h1>Teste Django + React</h1>
-            <p>{mensagem}</p>
-        </div>
-    );
+export default function App() {
+    return <RouterProvider router={router} />;
 }
-
-export default App;

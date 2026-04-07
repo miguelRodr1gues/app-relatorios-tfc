@@ -198,7 +198,7 @@ npm ci
 
 O Postgres ainda não arrancou ou está a reiniciar. Ver logs:
 ```powershell
-docker logs bdtfc
+docker logs <nome-do-container>
 ```
 
 **Tabelas em falta (só aparecem migrations)**

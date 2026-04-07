@@ -1,25 +1,31 @@
 # App Relatórios TFC
 
-Projeto full‑stack com:
-- **Backend**: Django + Django REST Framework
-- **Frontend**: React + TypeScript + Vite
-- **Base de dados**:
-  - **PostgreSQL** (dados da app / recursos do dashboard)
-  - **SQLite** (autenticação: `auth_db`)
-
-> Data do guia: 2026‑04‑06
+Stack full-stack com **Django + DRF** no backend, **React + TypeScript + Vite** no frontend, e duas bases de dados: **PostgreSQL** (dados da app) e **SQLite** (autenticação).
 
 ---
 
-## 1) Pré‑requisitos
+## Índice
 
-### Windows
-Instalar:
-- **Python 3.11+** (recomendado)
-- **Node.js 18+** (ou 20+)
-- **Docker Desktop** (recomendado para Postgres via `docker-compose`)
+1. [Pré-requisitos](#1-pré-requisitos)
+2. [Variáveis de ambiente](#2-variáveis-de-ambiente)
+3. [Subir o PostgreSQL](#3-subir-o-postgresql-docker)
+4. [Backend (Django)](#4-backend-django)
+5. [Frontend (React + Vite)](#5-frontend-react--vite)
+6. [Login (modo mock)](#6-login-modo-mock)
+7. [Troubleshooting](#7-troubleshooting)
+8. [Comandos rápidos](#8-comandos-rápidos-tldr)
 
-Confirmar versões:
+---
+
+## 1. Pré-requisitos
+
+| Ferramenta | Versão mínima |
+|---|---|
+| Python | 3.11+ |
+| Node.js | 18+ |
+| Docker Desktop | qualquer recente |
+
+Confirmar instalações:
 ```powershell
 python --version
 node -v
@@ -29,63 +35,14 @@ docker --version
 
 ---
 
-## 2) Dependências (como garantir que tens tudo)
+## 2. Variáveis de ambiente
 
-### 2.1) Frontend (Node)
-Este projeto usa **npm** e inclui **lockfile**: `frontend/package-lock.json`.
+O projeto usa **dois** ficheiros `.env` separados.
 
-Para instalares *exatamente* as mesmas versões que funcionam no projeto (incluindo libs de design/UI como Tailwind, Radix, etc.), usa:
-```powershell
-cd frontend
-npm ci
-```
+### `.env` — raiz do projeto (Docker / PostgreSQL)
 
-- `npm install` também funciona, mas `npm ci` é o recomendado para setups limpos/CI porque respeita 100% o `package-lock.json`.
+Criar `./.env` ao lado do `docker-compose.yml`:
 
-> Regra de ouro: **commitar sempre o `package-lock.json`** quando adicionas/atualizas dependências.
-
-#### Adicionar dependências novas
-```powershell
-cd frontend
-npm install nome-do-pacote
-```
-
-#### Adicionar dependências de desenvolvimento
-```powershell
-cd frontend
-npm install -D nome-do-pacote
-```
-
-
-### 2.2) Backend (Python)
-As dependências Python estão fixas em `backend/requirements.txt`.
-
-Para instalar:
-```powershell
-cd backend
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-> Regra de ouro: sempre que adicionares um pacote Python novo, atualiza o `requirements.txt`.
-
-
-### 2.3) Dependências de design (Tailwind / UI)
-O design do frontend depende principalmente de:
-- `tailwindcss` + `postcss` + `autoprefixer`
-- componentes UI em `frontend/src/components/ui/*` (muitos seguem o padrão shadcn)
-- libs como `@radix-ui/*`, `lucide-react`, `tailwind-merge`, etc.
-
-O mesmo `npm ci` instala tudo. Não há passos extra *desde que* corras o frontend via Vite (`npm run dev`) ou faças build (`npm run build`).
-
----
-
-## 3) Variáveis de ambiente (obrigatório)
-
-Este repo usa **dois** ficheiros `.env`:
-
-### 3.1) `.env` na raiz (para o `docker-compose.yml` do Postgres)
-Criar `./.env` (na raiz do projeto, ao lado do `docker-compose.yml`):
 ```env
 POSTGRES_DB=app_db
 POSTGRES_USER=app_user
@@ -93,15 +50,14 @@ POSTGRES_PASSWORD=app_password
 POSTGRES_PORT=5432
 ```
 
-> O `docker-compose.yml` lê este `.env` e expõe a porta para o host.
+### `backend/.env` — configuração Django
 
-### 3.2) `backend/.env` (para Django)
-Criar `backend/.env`:
+Criar `./backend/.env`:
+
 ```env
 DJANGO_SECRET_KEY=troca-por-uma-chave-segura
 DEBUG=True
 
-# Postgres (DB principal da app)
 POSTGRES_DB=app_db
 POSTGRES_USER=app_user
 POSTGRES_PASSWORD=app_password
@@ -109,97 +65,102 @@ POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=5432
 ```
 
-Gerar uma secret key (opcional):
-```powershell
-python -c "import secrets; print(secrets.token_urlsafe(50))"
-```
+> **Gerar uma secret key:**
+> ```powershell
+> python -c "import secrets; print(secrets.token_urlsafe(50))"
+> ```
 
 ---
 
-## 4) Subir o PostgreSQL (Docker)
+## 3. Subir o PostgreSQL (Docker)
 
 Na raiz do projeto:
+
 ```powershell
 docker compose up -d
 ```
 
-Verificar container:
 ```powershell
-docker ps
-```
-
-Para parar:
-```powershell
-docker compose down
+docker ps            # verificar container
+docker compose down  # parar
 ```
 
 ---
 
-## 5) Backend (Django)
+## 4. Backend (Django)
 
-### 5.1) Criar e ativar venv
+### 4.1 Criar e ativar o ambiente virtual
+
 ```powershell
 cd backend
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 ```
 
-Se o PowerShell bloquear scripts:
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
+> Se o PowerShell bloquear scripts:
+> ```powershell
+> Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+> ```
 
-### 5.2) Instalar dependências
+### 4.2 Instalar dependências
+
 ```powershell
 pip install -r requirements.txt
 ```
 
-### 5.3) Migrar as bases de dados (multi‑DB)
-O `core/settings.py` define:
-- `default`  -> Postgres
-- `auth_db`  -> SQLite (`backend/auth.sqlite3`)
+### 4.3 Executar migrações (multi-DB)
 
-Executar migrações:
+O projeto usa dois routers:
+- `default` → PostgreSQL
+- `auth_db` → SQLite (`backend/auth.sqlite3`)
+
 ```powershell
 python manage.py migrate --database=auth_db
 python manage.py migrate --database=default
 ```
 
-> Importante: se só fizeres `migrate` sem `--database`, podes acabar com tabelas no sítio errado.
+> ⚠️ Não usar `migrate` sem `--database` — as tabelas ficam no sítio errado.
 
-### 5.4) Criar superuser (na auth_db)
+### 4.4 Criar superutilizador
+
 ```powershell
 python manage.py createsuperuser --database=auth_db
 ```
 
-### 5.5) Correr o backend
+### 4.5 Arrancar o servidor
+
 ```powershell
 python manage.py runserver 127.0.0.1:8000
 ```
 
-URLs úteis:
-- Admin: http://127.0.0.1:8000/admin/
-- API base: http://127.0.0.1:8000/
+| URL | Descrição |
+|---|---|
+| http://127.0.0.1:8000/admin/ | Painel de administração |
+| http://127.0.0.1:8000/ | API base |
 
 ---
 
-## 6) Frontend (Vite + React)
+## 5. Frontend (React + Vite)
 
-### 6.1) Instalar dependências
+### 5.1 Instalar dependências
+
 ```powershell
 cd frontend
-npm ci
+npm ci    # usa o package-lock.json — preferível a npm install para setups limpos
 ```
 
-### 6.2) Correr o frontend
+> O design depende de `tailwindcss`, `@radix-ui/*`, `lucide-react`, `tailwind-merge` e componentes em `src/components/ui/` (padrão shadcn).
+
+### 5.2 Arrancar o servidor de desenvolvimento
+
 ```powershell
 npm run dev
 ```
 
-Abrir:
-- http://127.0.0.1:5173/
+Abrir: http://127.0.0.1:5173/
 
-### 6.3) Build
+### 5.3 Build de produção
+
 ```powershell
 npm run build
 npm run preview
@@ -207,41 +168,40 @@ npm run preview
 
 ---
 
-## 7) Login (mock) no frontend
+## 6. Login (modo mock)
 
-Atualmente a autenticação do frontend está em modo **mock** via `frontend/src/context/AuthContext.tsx`.
+A autenticação do frontend está em modo **mock** via `frontend/src/context/AuthContext.tsx`.
 
-Credenciais de teste:
-- **Email**: `admin@aresdopinh al.pt` (o código remove o espaço automaticamente)
-- **Password**: `Admin123!`
+| Campo | Valor |
+|---|---|
+| Email | `admin@aresdopinhal.pt` |
+| Password | `Admin123!` |
 
-Fluxo esperado:
-- Ao entrar em `/` -> vai para `/login`
-- Se existir `user` no `localStorage` -> redireciona para `/dashboard`
+**Fluxo:** `/` → redireciona para `/login` → após login, redireciona para `/dashboard` (guardado em `localStorage`).
 
 ---
 
-## 8) Troubleshooting
+## 7. Troubleshooting
 
-### 8.1) Instalação do frontend falha / versões diferentes
-Apaga `node_modules` e instala com `npm ci`:
+**Frontend não instala / versões erradas**
 ```powershell
-cd frontend
 Remove-Item -Recurse -Force node_modules
 npm ci
 ```
 
-### 8.2) Erro Postgres (connection refused)
-- Confirma que o Docker está a correr: `docker ps`
-- Confirma a porta no `.env` da raiz e `backend/.env`
-- Confirma que `POSTGRES_HOST=127.0.0.1`
+**Postgres — connection refused**
+- Confirmar que o Docker está a correr: `docker ps`
+- Verificar `POSTGRES_HOST=127.0.0.1` no `backend/.env`
+- Confirmar que a porta é consistente nos dois ficheiros `.env`
 
-### 8.3) `django.db.utils.OperationalError: server closed the connection unexpectedly`
-Geralmente significa que o Postgres não arrancou bem ou está a reiniciar.
-- Ver logs: `docker logs bdtfc`
+**`OperationalError: server closed the connection unexpectedly`**
 
-### 8.4) Falta de tabelas (apenas migrations aparecem)
-Confirma que migraste **nos dois** DBs:
+O Postgres ainda não arrancou ou está a reiniciar. Ver logs:
+```powershell
+docker logs bdtfc
+```
+
+**Tabelas em falta (só aparecem migrations)**
 ```powershell
 python manage.py migrate --database=auth_db
 python manage.py migrate --database=default
@@ -249,15 +209,13 @@ python manage.py migrate --database=default
 
 ---
 
-## 9) Comandos rápidos (tl;dr)
+## 8. Comandos rápidos (tl;dr)
 
-### Subir Postgres
 ```powershell
+# 1. Postgres
 docker compose up -d
-```
 
-### Backend
-```powershell
+# 2. Backend
 cd backend
 python -m venv venv
 .\venv\Scripts\Activate.ps1
@@ -265,10 +223,8 @@ pip install -r requirements.txt
 python manage.py migrate --database=auth_db
 python manage.py migrate --database=default
 python manage.py runserver 127.0.0.1:8000
-```
 
-### Frontend
-```powershell
+# 3. Frontend
 cd frontend
 npm ci
 npm run dev

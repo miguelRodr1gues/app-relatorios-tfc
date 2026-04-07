@@ -175,7 +175,7 @@ A autenticação do frontend está em modo **mock** via `frontend/src/context/Au
 | Campo | Valor |
 |---|---|
 | Email | `admin@aresdopinhal.pt` |
-| Password | `Admin123!` |
+| Password | `Admin` |
 
 **Fluxo:** `/` → redireciona para `/login` → após login, redireciona para `/dashboard` (guardado em `localStorage`).
 

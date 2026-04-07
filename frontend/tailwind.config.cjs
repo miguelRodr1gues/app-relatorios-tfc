@@ -4,45 +4,40 @@ module.exports = {
   darkMode: ["class"],
   theme: {
     extend: {
+      fontFamily: {
+        sans: [
+          "Poppins",
+          "sans-serif",
+        ],
+      },
+
       colors: {
-        border: "hsl(var(--border))",
-        input: "hsl(var(--input))",
-        ring: "hsl(var(--ring))",
-        background: "hsl(var(--background))",
-        foreground: "hsl(var(--foreground))",
-        primary: {
-          DEFAULT: "hsl(var(--primary))",
-          foreground: "hsl(var(--primary-foreground))",
-        },
-        secondary: {
-          DEFAULT: "hsl(var(--secondary))",
-          foreground: "hsl(var(--secondary-foreground))",
-        },
-        destructive: {
-          DEFAULT: "hsl(var(--destructive))",
-          foreground: "hsl(var(--destructive-foreground))",
-        },
-        muted: {
-          DEFAULT: "hsl(var(--muted))",
-          foreground: "hsl(var(--muted-foreground))",
-        },
-        accent: {
-          DEFAULT: "hsl(var(--accent))",
-          foreground: "hsl(var(--accent-foreground))",
-        },
-        popover: {
-          DEFAULT: "hsl(var(--popover))",
-          foreground: "hsl(var(--popover-foreground))",
-        },
-        card: {
-          DEFAULT: "hsl(var(--card))",
-          foreground: "hsl(var(--card-foreground))",
+        background: "#fafafa",
+        foreground: "#1f2937",
+        card: "#ffffff",
+        "card-foreground": "#1f2937",
+        border: "#e5e7eb",
+        muted: "#f3f4f6",
+        "muted-foreground": "#6b7280",
+        primary: "#2d6a4f",
+        "primary-foreground": "#ffffff",
+        destructive: "#dc2626",
+        "destructive-foreground": "#ffffff",
+      },
+
+      keyframes: {
+        fadeUp: {
+          "0%": { opacity: "0", transform: "translateY(10px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
         },
       },
+      animation: {
+        fadeUp: "fadeUp 0.4s ease both",
+      },
+
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        lg: "14px",
+        xl: "20px",
       },
     },
   },

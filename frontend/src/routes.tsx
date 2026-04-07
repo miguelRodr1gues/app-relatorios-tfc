@@ -41,10 +41,10 @@ export const router = createBrowserRouter([
 
   // Rotas privadas
   {
-    element: <RequireAuth />, // todas dentro precisam de login
+    element: <RequireAuth />,
     children: [
       {
-        Component: Layout, // Layout comum
+        Component: Layout,
         children: [
           { path: "/dashboard", Component: Dashboard },
           { path: "/relatorios", Component: Relatorios },

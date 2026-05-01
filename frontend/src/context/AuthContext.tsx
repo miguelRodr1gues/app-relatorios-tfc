@@ -1,102 +1,190 @@
-import { createContext, useContext, useMemo, useState, ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  ReactNode,
+  useEffect,
+  useRef,
+} from "react";
 
-interface User {
-    id: string;
-    name: string;
-    email: string;
-    avatar?: string;
-    provider?: 'email' | 'google' | 'microsoft';
+import { api } from "../lib/api";
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+}
+
+export interface AuthChallenge {
+  verificationToken: string;
+  email: string;
+  purpose: "register" | "login";
+  expiresIn: number;
+}
+
+export interface RegisterPayload {
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
+export interface VerifyCodePayload {
+  verificationToken: string;
+  code: string;
 }
 
 interface AuthContextType {
-    user: User | null;
-    isAuthenticated: boolean;
-    login: (email: string, password: string) => Promise<boolean>;
-    loginWithSocial: (provider: 'google' | 'microsoft') => Promise<boolean>;
-    logout: () => void;
+  user: User | null;
+  isAuthenticated: boolean;
+  loading: boolean;
+
+  requestLoginCode: (email: string) => Promise<AuthChallenge | null>;
+  requestRegisterCode: (payload: RegisterPayload) => Promise<AuthChallenge | null>;
+  verifyCode: (payload: VerifyCodePayload) => Promise<boolean>;
+  loginWithGoogle: (token: string) => Promise<boolean>;
+  checkAuth: () => Promise<boolean>;
+  logout: () => Promise<void>;
 }
 
+// ----------------------------
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Mock credentials (dev-only)
-export const MOCK_USER_CREDENTIALS = {
-    email: 'admin@aresdopinhal.pt',
-    password: 'admin',
-} as const;
+// ----------------------------
+function mapUser(data: any): User {
+  const email = data?.email ?? "";
+  const name = data?.name?.trim() || (email ? email.split("@")[0] : "User");
 
-export const MOCK_USER: User = {
-    id: '1',
-    name: 'Admin',
-    email: MOCK_USER_CREDENTIALS.email,
-    avatar: undefined,
-    provider: 'email',
-};
-
-export function AuthProvider({ children }: { children: ReactNode }) {
-    const [user, setUser] = useState<User | null>(() => {
-        const storedUser = localStorage.getItem('user');
-        return storedUser ? JSON.parse(storedUser) : null;
-    });
-
-    const login = async (email: string, password: string): Promise<boolean> => {
-        // Mock login (em produção, substituir por chamada à API)
-        const normalizedEmail = email.trim().toLowerCase();
-
-        if (
-            normalizedEmail === MOCK_USER_CREDENTIALS.email.toLowerCase() &&
-            password === MOCK_USER_CREDENTIALS.password
-        ) {
-            setUser(MOCK_USER);
-            localStorage.setItem('user', JSON.stringify(MOCK_USER));
-            return true;
-        }
-
-        return false;
-    };
-
-    const loginWithSocial = async (provider: 'google' | 'microsoft'): Promise<boolean> => {
-        // Mock social login
-        const providerNames: Record<typeof provider, string> = {
-            google: 'Google',
-            microsoft: 'Microsoft',
-        };
-
-        const mockUser: User = {
-            id: `${provider}-${Date.now()}`,
-            name: `Utilizador ${providerNames[provider]}`,
-            email: `user@${provider}.com`,
-            avatar: undefined,
-            provider: provider,
-        };
-
-        setUser(mockUser);
-        localStorage.setItem('user', JSON.stringify(mockUser));
-        return true;
-    };
-
-    const logout = () => {
-        setUser(null);
-        localStorage.removeItem('user');
-    };
-
-    localStorage.removeItem('user');
-
-    const value = useMemo<AuthContextType>(
-        () => ({ user, isAuthenticated: !!user, login, loginWithSocial, logout }),
-        [user]
-    );
-
-    return (
-        <AuthContext.Provider value={value}>
-            {children}
-        </AuthContext.Provider>
-    );
+  return {
+    id: String(data?.id ?? ""),
+    name,
+    email,
+    avatar: data?.avatar ?? data?.picture,
+  };
 }
 
-export function useAuth() {
-    const context = useContext(AuthContext);
-    if (context === undefined) {
-        throw new Error('useAuth must be used within an AuthProvider');
+// ----------------------------
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const bootRef = useRef(false);
+
+  // ----------------------------
+  const checkAuth = async (): Promise<boolean> => {
+    try {
+      const { data } = await api.get("/api/auth/user/");
+      setUser(mapUser(data));
+      return true;
+    } catch {
+      setUser(null);
+      return false;
     }
-    return context;
+  };
+
+  // ----------------------------
+  useEffect(() => {
+    if (bootRef.current) return;
+    bootRef.current = true;
+
+    (async () => {
+      await checkAuth();
+      setLoading(false);
+    })();
+  }, []);
+
+  // ----------------------------
+  const requestLoginCode = async (email: string): Promise<AuthChallenge | null> => {
+    try {
+      const { data } = await api.post("/api/auth/login-email/", { email });
+      return {
+        verificationToken: data.verification_token,
+        email: data.email,
+        purpose: data.purpose,
+        expiresIn: data.expires_in,
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const requestRegisterCode = async (payload: RegisterPayload): Promise<AuthChallenge | null> => {
+    try {
+      const { data } = await api.post("/api/auth/register/", {
+        first_name: payload.firstName,
+        last_name: payload.lastName,
+        email: payload.email,
+      });
+
+      return {
+        verificationToken: data.verification_token,
+        email: data.email,
+        purpose: data.purpose,
+        expiresIn: data.expires_in,
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const verifyCode = async ({ verificationToken, code }: VerifyCodePayload) => {
+    try {
+      await api.post("/api/auth/verify-code/", {
+        verification_token: verificationToken,
+        code,
+      });
+      return await checkAuth();
+    } catch {
+      setUser(null);
+      return false;
+    }
+  };
+
+  const loginWithGoogle = async (token: string) => {
+    try {
+      await api.post("/api/auth/google/", { token });
+      return await checkAuth();
+    } catch {
+      setUser(null);
+      return false;
+    }
+  };
+
+  // ----------------------------
+  const logout = async () => {
+    try {
+      await api.post("/api/auth/logout/");
+    } finally {
+      setUser(null);
+    }
+  };
+
+  // ----------------------------
+  const value = useMemo<AuthContextType>(
+      () => ({
+        user,
+        isAuthenticated: !!user,
+        loading,
+        requestLoginCode,
+        requestRegisterCode,
+        verifyCode,
+        loginWithGoogle,
+        checkAuth,
+        logout,
+      }),
+      [user, loading]
+  );
+
+  return (
+      <AuthContext.Provider value={value}>
+        {children}
+      </AuthContext.Provider>
+  );
+}
+
+// ----------------------------
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error("useAuth must be used within AuthProvider");
+  return context;
 }

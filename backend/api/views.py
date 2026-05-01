@@ -1,34 +1,330 @@
-from django.apps import apps
+from datetime import timedelta
+
+import secrets
+
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import check_password, make_password
+from django.core.mail import send_mail
 from django.db import connection
+from django.http import JsonResponse
+from django.utils import timezone
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from .models import OTPChallenge
+from .serializers import (
+    GoogleTokenSerializer,
+    LoginEmailRequestSerializer,
+    OTPChallengeResponseSerializer,
+    RegisterStartSerializer,
+    UserSerializer,
+    VerifyCodeSerializer,
+)
+from .services.google_auth_service import verify_google_access_token, verify_google_id_token
+
+User = get_user_model()
+
+
+def _cookie_kwargs(max_age: int) -> dict:
+    return {
+        "httponly": True,
+        "samesite": settings.JWT_COOKIE_SAMESITE,
+        "secure": settings.JWT_COOKIE_SECURE,
+        "path": "/",
+        "max_age": max_age,
+    }
+
+
+def _set_jwt_cookies(response: JsonResponse, refresh: RefreshToken) -> None:
+    response.set_cookie(
+        key=settings.JWT_ACCESS_COOKIE_NAME,
+        value=str(refresh.access_token),
+        **_cookie_kwargs(int(settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"].total_seconds())),
+    )
+    response.set_cookie(
+        key=settings.JWT_REFRESH_COOKIE_NAME,
+        value=str(refresh),
+        **_cookie_kwargs(int(settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds())),
+    )
+
+
+def _delete_jwt_cookies(response: JsonResponse) -> None:
+    response.delete_cookie(settings.JWT_ACCESS_COOKIE_NAME, path="/", samesite=settings.JWT_COOKIE_SAMESITE)
+    response.delete_cookie(settings.JWT_REFRESH_COOKIE_NAME, path="/", samesite=settings.JWT_COOKIE_SAMESITE)
+
+
+def _build_unique_username(email: str) -> str:
+    base = (email.split("@")[0] or "user").strip() or "user"
+    candidate = base
+    counter = 1
+    while User.objects.filter(username=candidate).exists():
+        candidate = f"{base}{counter}"
+        counter += 1
+    return candidate
+
+
+def _generate_code() -> str:
+    return f"{secrets.randbelow(10**settings.OTP_CODE_LENGTH):0{settings.OTP_CODE_LENGTH}d}"
+
+
+def _send_code_email(email: str, code: str, purpose: str) -> None:
+    subject = "Código de verificação"
+    action = "registo" if purpose == OTPChallenge.PURPOSE_REGISTER else "login"
+    message = (
+        f"O teu código para {action} é: {code}\n\n"
+        f"Este código expira em {settings.OTP_CODE_EXPIRY_MINUTES} minutos."
+    )
+    send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=False)
+
+
+def _issue_jwt_response(user: User):
+    refresh = RefreshToken.for_user(user)
+    response = JsonResponse({"success": True, "user": UserSerializer(user).data})
+    _set_jwt_cookies(response, refresh)
+    return response
+
+
+def _challenge_response(challenge: OTPChallenge):
+    expires_in = max(0, int((challenge.expires_at - timezone.now()).total_seconds()))
+    return Response(
+        OTPChallengeResponseSerializer(
+            {
+                "verification_token": challenge.verification_token,
+                "email": challenge.email,
+                "purpose": challenge.purpose,
+                "expires_in": expires_in,
+            }
+        ).data
+    )
+
+
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = RegisterStartSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        email = data["email"].lower().strip()
+        first_name = data["first_name"].strip()
+        last_name = data["last_name"].strip()
+
+        user = User.objects.filter(email=email).first()
+        if user and user.is_active:
+            return Response({"error": "Este email já está registado."}, status=400)
+
+        if not user:
+            user = User(email=email, username=_build_unique_username(email), first_name=first_name, last_name=last_name, is_active=False)
+            user.set_unusable_password()
+            user.save()
+        else:
+            user.first_name = first_name
+            user.last_name = last_name
+            user.is_active = False
+            if not user.username or "@" in user.username:
+                user.username = _build_unique_username(email)
+            user.save()
+
+        code = _generate_code()
+        challenge = OTPChallenge.objects.create(
+            email=email,
+            purpose=OTPChallenge.PURPOSE_REGISTER,
+            code_hash=make_password(code),
+            first_name=first_name,
+            last_name=last_name,
+            payload={"first_name": first_name, "last_name": last_name},
+            expires_at=timezone.now() + timedelta(minutes=settings.OTP_CODE_EXPIRY_MINUTES),
+        )
+        _send_code_email(email, code, OTPChallenge.PURPOSE_REGISTER)
+        return _challenge_response(challenge)
+
+
+class LoginEmailView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = LoginEmailRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"].lower().strip()
+
+        user = User.objects.filter(email=email, is_active=True).first()
+        if not user:
+            return Response({"error": "Conta inexistente ou não verificada."}, status=400)
+
+        code = _generate_code()
+        challenge = OTPChallenge.objects.create(
+            email=email,
+            purpose=OTPChallenge.PURPOSE_LOGIN,
+            code_hash=make_password(code),
+            expires_at=timezone.now() + timedelta(minutes=settings.OTP_CODE_EXPIRY_MINUTES),
+        )
+        _send_code_email(email, code, OTPChallenge.PURPOSE_LOGIN)
+        return _challenge_response(challenge)
+
+
+class VerifyCodeView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = VerifyCodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        token = serializer.validated_data["verification_token"]
+        code = serializer.validated_data["code"]
+
+        challenge = OTPChallenge.objects.filter(verification_token=token).first()
+        if not challenge:
+            return Response({"error": "Código inválido."}, status=400)
+        if challenge.is_consumed():
+            return Response({"error": "Este código já foi utilizado."}, status=400)
+        if challenge.is_expired():
+            return Response({"error": "O código expirou."}, status=400)
+        if challenge.attempts >= 5:
+            return Response({"error": "Demasiadas tentativas. Pede um novo código."}, status=400)
+
+        if not check_password(code, challenge.code_hash):
+            challenge.attempts += 1
+            challenge.save(update_fields=["attempts"])
+            return Response({"error": "Código incorreto."}, status=400)
+
+        challenge.consumed_at = timezone.now()
+        challenge.save(update_fields=["consumed_at"])
+
+        if challenge.purpose == OTPChallenge.PURPOSE_REGISTER:
+            user = User.objects.filter(email=challenge.email).first()
+            if not user:
+                user = User(email=challenge.email, username=_build_unique_username(challenge.email))
+            user.first_name = challenge.first_name
+            user.last_name = challenge.last_name
+            user.is_active = True
+            user.set_unusable_password()
+            user.save()
+        else:
+            user = User.objects.filter(email=challenge.email, is_active=True).first()
+            if not user:
+                return Response({"error": "Conta inexistente ou desativada."}, status=400)
+
+        return _issue_jwt_response(user)
+
+
+class GoogleLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = GoogleTokenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        token = serializer.validated_data["token"]
+
+        try:
+            google_user = verify_google_id_token(token)
+        except Exception:
+            try:
+                google_user = verify_google_access_token(token)
+            except Exception as exc:
+                return Response({"error": str(exc)}, status=400)
+
+        user, created = User.objects.get_or_create(
+            email=google_user.email,
+            defaults={
+                "username": _build_unique_username(google_user.email),
+                "first_name": google_user.name.split(" ", 1)[0] if google_user.name else "",
+                "last_name": google_user.name.split(" ", 1)[1] if len(google_user.name.split(" ", 1)) > 1 else "",
+                "is_active": True,
+            },
+        )
+        if created:
+            user.set_unusable_password()
+            user.save()
+        else:
+            updated = False
+            if not user.first_name and google_user.name:
+                user.first_name = google_user.name.split(" ", 1)[0]
+                updated = True
+            if not user.last_name and google_user.name and len(google_user.name.split(" ", 1)) > 1:
+                user.last_name = google_user.name.split(" ", 1)[1]
+                updated = True
+            if not user.username or "@" in user.username:
+                user.username = _build_unique_username(google_user.email)
+                updated = True
+            if not user.is_active:
+                user.is_active = True
+                updated = True
+            if updated:
+                user.save()
+
+        return _issue_jwt_response(user)
+
+
+class LogoutView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        response = JsonResponse({"success": True})
+        _delete_jwt_cookies(response)
+        return response
+
+
+class RefreshView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        refresh_token = request.COOKIES.get(settings.JWT_REFRESH_COOKIE_NAME)
+        if not refresh_token:
+            return Response({"error": "Refresh token missing"}, status=401)
+
+        try:
+            refresh = RefreshToken(refresh_token)
+            new_access = str(refresh.access_token)
+        except TokenError:
+            response = JsonResponse({"error": "Invalid refresh token"}, status=401)
+            _delete_jwt_cookies(response)
+            return response
+
+        response = JsonResponse({"success": True})
+        response.set_cookie(
+            key=settings.JWT_ACCESS_COOKIE_NAME,
+            value=new_access,
+            **_cookie_kwargs(int(settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"].total_seconds())),
+        )
+        return response
+
+
+class UserMeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(UserSerializer(request.user).data)
+
+
+# =========================================================
+# API EXAMPLE
+# =========================================================
 
 class EntityListAPIView(APIView):
-    """
-    Lista tabelas reais da base PostgreSQL (inclui as criadas fora do Django).
-    Query params:
-      - q: filtro por nome da tabela
-      - schema: filtrar schema (default: public)
-    """
-    def get(self, request):
-        query = (request.query_params.get("q") or "").strip().lower()
-        schema = (request.query_params.get("schema") or "public").strip()
+    permission_classes = [IsAuthenticated]
 
-        sql = """
-            SELECT table_schema, table_name
-            FROM information_schema.tables
-            WHERE table_type = 'BASE TABLE'
-              AND table_schema = %s
-            ORDER BY table_name;
-        """
+    def get(self, request):
+        query = request.query_params.get("q", "").lower()
+        schema = request.query_params.get("schema", "public")
 
         with connection.cursor() as cursor:
-            cursor.execute(sql, [schema])
+            cursor.execute(
+                """
+                SELECT table_schema, table_name
+                FROM information_schema.tables
+                WHERE table_schema = %s
+                ORDER BY table_name
+                """,
+                [schema],
+            )
             rows = cursor.fetchall()
 
-        tables = [
-            {"schema": row[0], "table_name": row[1]}
-            for row in rows
-            if not query or query in row[1].lower()
-        ]
-        return Response(tables)
+        return Response([
+            {"schema": s, "table": t}
+            for s, t in rows
+            if not query or query in t.lower()
+        ])

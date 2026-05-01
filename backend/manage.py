@@ -15,6 +15,7 @@ def main():
             "available on your PYTHONPATH environment variable? Did you "
             "forget to activate a virtual environment?"
         ) from exc
+    # Default runserver binding can be 127.0.0.1; keep CLI behavior unchanged.
     execute_from_command_line(sys.argv)
 
 

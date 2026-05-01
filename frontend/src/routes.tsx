@@ -1,6 +1,7 @@
-// src/router.jsx
-import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
+import { ReactNode } from "react";
 import { useAuth } from "./context/AuthContext";
+
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Relatorios from "./pages/Relatorios";
@@ -8,54 +9,86 @@ import Estrutura from "./pages/Estrutura";
 import Analises from "./pages/Analises";
 import Settings from "./pages/Settings";
 import Login from "./pages/Login";
+import Register from "./pages/Register";
+import VerifyCode from "./pages/VerifyCode";
 
-// Bloqueia rotas privadas
-function RequireAuth() {
-  const { isAuthenticated } = useAuth();
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
-  return <Outlet />;
-}
+function AuthGate({
+                      children,
+                      requireAuth,
+                  }: {
+    children: ReactNode;
+    requireAuth: boolean;
+}) {
+    const { isAuthenticated, loading } = useAuth();
 
-// Redireciona "/" para login ou dashboard
-function IndexRedirect() {
-  const { isAuthenticated } = useAuth();
-  return isAuthenticated ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />;
-}
+    if (loading) return null;
 
-function RedirectIfAuthenticated({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
-  return isAuthenticated ? <Navigate to="/dashboard" replace /> : <>{children}</>;
+    if (requireAuth && !isAuthenticated) {
+        return <Navigate to="/login" replace />;
+    }
+
+    if (!requireAuth && isAuthenticated) {
+        return <Navigate to="/dashboard" replace />;
+    }
+
+    return <>{children}</>;
 }
 
 export const router = createBrowserRouter([
-  // Entrada da app
-  { path: "/", element: <IndexRedirect /> },
+    // 🟦 Root
+    {
+        path: "/",
+        element: (
+            <AuthGate requireAuth={true}>
+                <Navigate to="/dashboard" replace />
+            </AuthGate>
+        ),
+    },
 
-  // Rotas públicas
-  { path: "/login", element: (
-      <RedirectIfAuthenticated>
-        <Login />
-      </RedirectIfAuthenticated>
-    )
-  },
+    // 🟩 Login (sem Google callback aqui)
+    {
+        path: "/login",
+        element: (
+            <AuthGate requireAuth={false}>
+                <Login />
+            </AuthGate>
+        ),
+    },
 
-  // Rotas privadas
-  {
-    element: <RequireAuth />,
-    children: [
-      {
-        Component: Layout,
+    {
+        path: "/register",
+        element: (
+            <AuthGate requireAuth={false}>
+                <Register />
+            </AuthGate>
+        ),
+    },
+
+    {
+        path: "/verify-code",
+        element: (
+            <AuthGate requireAuth={false}>
+                <VerifyCode />
+            </AuthGate>
+        ),
+    },
+
+
+    {
+        element: (
+            <AuthGate requireAuth={true}>
+                <Layout />
+            </AuthGate>
+        ),
         children: [
-          { path: "/dashboard", Component: Dashboard },
-          { path: "/relatorios", Component: Relatorios },
-          { path: "/estrutura", Component: Estrutura },
-          { path: "/analises", Component: Analises },
-          { path: "/settings", Component: Settings },
+            { path: "/dashboard", element: <Dashboard /> },
+            { path: "/relatorios", element: <Relatorios /> },
+            { path: "/estrutura", element: <Estrutura /> },
+            { path: "/analises", element: <Analises /> },
+            { path: "/settings", element: <Settings /> },
         ],
-      },
-    ],
-  },
+    },
 
-  // 404 → deixa o IndexRedirect decidir
-  { path: "*", element: <Navigate to="/" replace /> },
+    // 🟥 fallback
+    { path: "*", element: <Navigate to="/" replace /> },
 ]);

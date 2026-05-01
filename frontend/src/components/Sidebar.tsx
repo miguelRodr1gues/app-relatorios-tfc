@@ -31,7 +31,7 @@ export default function Sidebar({ activeNav, onNavChange, collapsed = false, onT
             <div className="w-10 h-10 rounded-full bg-white dark:bg-[#2a2a2a] border border-[#e5e7eb] dark:border-[#3a3a3a] flex items-center justify-center flex-shrink-0 shadow-sm">
               <img src={logo} alt="Logo" className="w-6 h-6 object-contain" />
             </div>
-            <div className="font-bold text-[18px] text-[#1f2937] dark:text-white">Ares do Pinhal</div>
+            <div className="font-bold text-[16px] text-[#1f2937] dark:text-white">Ares do Pinhal</div>
           </div>
         )}
 
@@ -41,13 +41,17 @@ export default function Sidebar({ activeNav, onNavChange, collapsed = false, onT
           </div>
         )}
 
-        {/* Toggle Button */}
+        {/* Button to toggle collapse */}
         <button
-          onClick={onToggleCollapse}
-          className="flex items-center justify-center w-8 h-8 rounded-full text-[#6b7280] dark:text-[#9ca3af] hover:bg-[#f9fafb] dark:hover:bg-[#3a3a3a] hover:text-[#374051] dark:hover:text-white transition-all flex-shrink-0"
-          title={collapsed ? 'Expandir' : 'Minimizar'}
+            onClick={onToggleCollapse}
+            className="flex items-center justify-center w-10 h-10 rounded-full text-[#6b7280] dark:text-[#9ca3af] hover:bg-[#f9fafb] dark:hover:bg-[#3a3a3a] hover:text-[#374051] dark:hover:text-white transition-all"
+            title={collapsed ? 'Expandir' : 'Minimizar'}
         >
-          {collapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+          {collapsed ? (
+              <ChevronRight className="w-5 h-5" />
+          ) : (
+              <ChevronLeft className="w-5 h-5" />
+          )}
         </button>
       </div>
 
@@ -110,7 +114,6 @@ export default function Sidebar({ activeNav, onNavChange, collapsed = false, onT
         })}
       </div>
 
-      {/* Remove o botão antigo do final */}
     </aside>
   );
 }

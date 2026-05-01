@@ -6,6 +6,7 @@ import ReportWizard from './ReportWizard';
 import { WizardProvider, useWizard } from '../context/WizardContext';
 import { SearchProvider } from '../context/SearchContext';
 import { ThemeProvider } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 
 function LayoutContent() {
   const navigate = useNavigate();
@@ -13,6 +14,7 @@ function LayoutContent() {
   const [activeNav, setActiveNav] = useState('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { isOpen, openWizard, closeWizard } = useWizard();
+  const { logout } = useAuth();
 
   useEffect(() => {
     const pathMap: Record<string, string> = {
@@ -25,7 +27,13 @@ function LayoutContent() {
     setActiveNav(pathMap[location.pathname] || 'dashboard');
   }, [location.pathname]);
 
-  const handleNavChange = (nav: string) => {
+  const handleNavChange = async (nav: string) => {
+    if (nav === 'logout') {
+      await logout();
+      navigate('/login');
+      return;
+    }
+
     if (nav === 'novo-relatorio') {
       openWizard();
       return;

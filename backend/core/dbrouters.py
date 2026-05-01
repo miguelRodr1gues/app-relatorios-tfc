@@ -10,8 +10,10 @@ class AuthRouter:
         "admin",
         "contenttypes",
         "sessions",
+        "sites",
         "account",
         "socialaccount",
+        "authtoken",
     }
 
     def db_for_read(self, model, **hints):

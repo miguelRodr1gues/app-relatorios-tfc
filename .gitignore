@@ -21,6 +21,7 @@ frontend/dist/
 !.env.example
 frontend/.env
 backend/.env
+backend/auth.sqlite3
 
 # --- Logs ---
 logs

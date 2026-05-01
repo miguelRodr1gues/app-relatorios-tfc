@@ -4,7 +4,7 @@ import { useTheme } from "../context/ThemeContext";
 import logo from "../assets/logo.png";
 
 interface AuthShellProps {
-  title: string;
+  title?: string;
   subtitle: string;
   children: ReactNode;
   footer?: ReactNode;
@@ -34,9 +34,11 @@ export default function AuthShell({ title, subtitle, children, footer }: AuthShe
         </div>
 
         <div className="bg-white dark:bg-[#2a2a2a] rounded-xl border border-[#e5e7eb] dark:border-[#3a3a3a] p-8 shadow-lg">
-          <h1 className="text-[20px] font-semibold text-[#1f2937] dark:text-white text-center mb-6">
-            {title}
-          </h1>
+          {title ? (
+            <h1 className="text-[20px] font-semibold text-[#1f2937] dark:text-white text-center mb-6">
+              {title}
+            </h1>
+          ) : null}
           {children}
           {footer ? <div className="mt-6">{footer}</div> : null}
         </div>

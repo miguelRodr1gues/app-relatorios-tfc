@@ -1,12 +1,13 @@
 from datetime import timedelta
 
 import secrets
+from smtplib import SMTPAuthenticationError
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
-from django.core.mail import send_mail
-from django.db import connection
+from django.core.mail import EmailMessage
+from django.db import connection, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -74,11 +75,33 @@ def _generate_code() -> str:
 def _send_code_email(email: str, code: str, purpose: str) -> None:
     subject = "Código de verificação"
     action = "registo" if purpose == OTPChallenge.PURPOSE_REGISTER else "login"
-    message = (
-        f"O teu código para {action} é: {code}\n\n"
-        f"Este código expira em {settings.OTP_CODE_EXPIRY_MINUTES} minutos."
+    html_content = f"""
+    <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                <h2>Código de Verificação</h2>
+                <p>Olá,</p>
+                <p>O teu código para <strong>{action}</strong> é:</p>
+                <div style="background-color: #f0f0f0; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0;">
+                    <h1 style="letter-spacing: 5px; color: #2d6a4f; margin: 0;">{code}</h1>
+                </div>
+                <p style="color: #666; font-size: 14px;">Este código expira em <strong>{settings.OTP_CODE_EXPIRY_MINUTES} minutos</strong>.</p>
+                <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
+                <p style="color: #999; font-size: 12px;">Se não solicitaste este código, ignora este email.</p>
+            </div>
+        </body>
+    </html>
+    """
+
+    # Send email via Django's email backend (configured in settings.py)
+    email_message = EmailMessage(
+        subject=subject,
+        body=html_content,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=[email],
     )
-    send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [email], fail_silently=False)
+    email_message.content_subtype = "html"  # Send as HTML email
+    email_message.send(fail_silently=False)
 
 
 def _issue_jwt_response(user: User):
@@ -114,34 +137,43 @@ class RegisterView(APIView):
         first_name = data["first_name"].strip()
         last_name = data["last_name"].strip()
 
-        user = User.objects.filter(email=email).first()
-        if user and user.is_active:
-            return Response({"error": "Este email já está registado."}, status=400)
+        try:
+            with transaction.atomic():
+                user = User.objects.filter(email=email).first()
+                if user and user.is_active:
+                    return Response({"error": "Este email já está registado."}, status=400)
 
-        if not user:
-            user = User(email=email, username=_build_unique_username(email), first_name=first_name, last_name=last_name, is_active=False)
-            user.set_unusable_password()
-            user.save()
-        else:
-            user.first_name = first_name
-            user.last_name = last_name
-            user.is_active = False
-            if not user.username or "@" in user.username:
-                user.username = _build_unique_username(email)
-            user.save()
+                if not user:
+                    user = User(email=email, username=_build_unique_username(email), first_name=first_name, last_name=last_name, is_active=False)
+                    user.set_unusable_password()
+                    user.save()
+                else:
+                    user.first_name = first_name
+                    user.last_name = last_name
+                    user.is_active = False
+                    if not user.username or "@" in user.username:
+                        user.username = _build_unique_username(email)
+                    user.save()
 
-        code = _generate_code()
-        challenge = OTPChallenge.objects.create(
-            email=email,
-            purpose=OTPChallenge.PURPOSE_REGISTER,
-            code_hash=make_password(code),
-            first_name=first_name,
-            last_name=last_name,
-            payload={"first_name": first_name, "last_name": last_name},
-            expires_at=timezone.now() + timedelta(minutes=settings.OTP_CODE_EXPIRY_MINUTES),
-        )
-        _send_code_email(email, code, OTPChallenge.PURPOSE_REGISTER)
-        return _challenge_response(challenge)
+                code = _generate_code()
+                challenge = OTPChallenge.objects.create(
+                    email=email,
+                    purpose=OTPChallenge.PURPOSE_REGISTER,
+                    code_hash=make_password(code),
+                    first_name=first_name,
+                    last_name=last_name,
+                    payload={"first_name": first_name, "last_name": last_name},
+                    expires_at=timezone.now() + timedelta(minutes=settings.OTP_CODE_EXPIRY_MINUTES),
+                )
+                _send_code_email(email, code, OTPChallenge.PURPOSE_REGISTER)
+                return _challenge_response(challenge)
+        except SMTPAuthenticationError:
+            return Response(
+                {"error": "Falha na autenticação SMTP. Verifica se estás a usar a App Password do Gmail (não a password normal) e se o 2FA está ativo."},
+                status=500,
+            )
+        except Exception as exc:
+            return Response({"error": f"Nao foi possivel enviar o código: {exc}"}, status=500)
 
 
 class LoginEmailView(APIView):
@@ -152,19 +184,28 @@ class LoginEmailView(APIView):
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].lower().strip()
 
-        user = User.objects.filter(email=email, is_active=True).first()
-        if not user:
-            return Response({"error": "Conta inexistente ou não verificada."}, status=400)
+        try:
+            with transaction.atomic():
+                user = User.objects.filter(email=email, is_active=True).first()
+                if not user:
+                    return Response({"error": "Conta inexistente ou não verificada."}, status=400)
 
-        code = _generate_code()
-        challenge = OTPChallenge.objects.create(
-            email=email,
-            purpose=OTPChallenge.PURPOSE_LOGIN,
-            code_hash=make_password(code),
-            expires_at=timezone.now() + timedelta(minutes=settings.OTP_CODE_EXPIRY_MINUTES),
-        )
-        _send_code_email(email, code, OTPChallenge.PURPOSE_LOGIN)
-        return _challenge_response(challenge)
+                code = _generate_code()
+                challenge = OTPChallenge.objects.create(
+                    email=email,
+                    purpose=OTPChallenge.PURPOSE_LOGIN,
+                    code_hash=make_password(code),
+                    expires_at=timezone.now() + timedelta(minutes=settings.OTP_CODE_EXPIRY_MINUTES),
+                )
+                _send_code_email(email, code, OTPChallenge.PURPOSE_LOGIN)
+                return _challenge_response(challenge)
+        except SMTPAuthenticationError:
+            return Response(
+                {"error": "Falha na autenticação SMTP. Verifica se estás a usar a App Password do Gmail (não a password normal) e se o 2FA está ativo."},
+                status=500,
+            )
+        except Exception as exc:
+            return Response({"error": f"Nao foi possivel enviar o código: {exc}"}, status=500)
 
 
 class VerifyCodeView(APIView):

@@ -63,7 +63,20 @@ POSTGRES_USER=app_user
 POSTGRES_PASSWORD=app_password
 POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=5432
+
+# Email / SMTP (necessário para o código chegar ao email)
+# EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+# EMAIL_HOST=smtp.gmail.com
+# EMAIL_PORT=587
+# EMAIL_USE_TLS=True
+# EMAIL_USE_SSL=False
+# EMAIL_HOST_USER=teu_email@example.com
+# EMAIL_HOST_PASSWORD=senha_da_app
+# DEFAULT_FROM_EMAIL=no-reply@teu-dominio.com
 ```
+
+> Se estas variáveis de email não estiverem definidas, o Django pode ficar no backend de consola
+> e o código OTP vai aparecer no terminal em vez de ser enviado para a caixa de entrada.
 
 > **Gerar uma secret key:**
 > ```powershell

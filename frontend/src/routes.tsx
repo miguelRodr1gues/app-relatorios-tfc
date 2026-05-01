@@ -35,17 +35,11 @@ function AuthGate({
 }
 
 export const router = createBrowserRouter([
-    // 🟦 Root
     {
         path: "/",
-        element: (
-            <AuthGate requireAuth={true}>
-                <Navigate to="/dashboard" replace />
-            </AuthGate>
-        ),
+        element: <Navigate to="/dashboard" replace />,
     },
 
-    // 🟩 Login (sem Google callback aqui)
     {
         path: "/login",
         element: (
@@ -73,7 +67,6 @@ export const router = createBrowserRouter([
         ),
     },
 
-
     {
         element: (
             <AuthGate requireAuth={true}>
@@ -89,6 +82,5 @@ export const router = createBrowserRouter([
         ],
     },
 
-    // 🟥 fallback
     { path: "*", element: <Navigate to="/" replace /> },
 ]);

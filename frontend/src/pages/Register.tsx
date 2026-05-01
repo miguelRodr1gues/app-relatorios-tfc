@@ -1,40 +1,106 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { Mail, User } from "lucide-react";
+import { FcGoogle } from "react-icons/fc";
 import AuthShell from "../components/AuthShell";
+import AuthInput from "../components/auth/AuthInput";
+import AuthPrimaryButton from "../components/auth/AuthPrimaryButton";
+import AuthSocialButton from "../components/auth/AuthSocialButton";
+import AuthDivider from "../components/auth/AuthDivider";
 
 export default function Register() {
   const navigate = useNavigate();
-  const { requestRegisterCode } = useAuth();
+  const { requestRegisterCode, loginWithGoogle } = useAuth();
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
+  const [socialLoading, setSocialLoading] = useState<string | null>(null);
   const [error, setError] = useState("");
+
+  const handleGoogleLogin = () => {
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    const redirectUri = `${window.location.origin}/register`;
+    const scope = "openid profile email";
+    const nonce = Math.random().toString(36).slice(2);
+
+    const googleAuthUrl =
+      `https://accounts.google.com/o/oauth2/v2/auth` +
+      `?client_id=${encodeURIComponent(clientId)}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&response_type=token%20id_token` +
+      `&response_mode=fragment` +
+      `&scope=${encodeURIComponent(scope)}` +
+      `&nonce=${encodeURIComponent(nonce)}` +
+      `&prompt=select_account`;
+
+    window.location.href = googleAuthUrl;
+  };
+
+  useEffect(() => {
+    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+    const params = new URLSearchParams(hash);
+    const token = params.get("id_token") || params.get("access_token");
+
+    if (!token) return;
+
+    (async () => {
+      setSocialLoading("google");
+      const ok = await loginWithGoogle(token);
+      setSocialLoading(null);
+      window.history.replaceState(null, "", "/register");
+
+      if (ok) navigate("/dashboard", { replace: true });
+    })();
+  }, [loginWithGoogle, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setLoading(true);
 
-    const challenge = await requestRegisterCode({ firstName, lastName, email });
-    setLoading(false);
+    const normalizedFirstName = firstName.trim();
+    const normalizedLastName = lastName.trim();
+    const normalizedEmail = email.trim().toLowerCase();
 
-    if (challenge) {
+    if (!normalizedFirstName || !normalizedLastName || !normalizedEmail) {
+      setError("Preencha o nome, apelido e email.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const challenge = await requestRegisterCode({
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
+        email: normalizedEmail,
+      });
+
+      if (!challenge?.verificationToken) {
+        if (challenge?.error) {
+          setError(challenge.error);
+          return;
+        }
+
+        setError("Nao foi possivel criar a conta.");
+        return;
+      }
+
       navigate(
-        `/verify-code?token=${encodeURIComponent(challenge.verificationToken)}&email=${encodeURIComponent(challenge.email)}&purpose=register&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}`,
-        { replace: true }
+          `/verify-code?token=${encodeURIComponent(challenge.verificationToken)}&email=${encodeURIComponent(challenge.email)}&purpose=register&first_name=${encodeURIComponent(normalizedFirstName)}&last_name=${encodeURIComponent(normalizedLastName)}`,
+          { replace: true }
       );
-    } else {
-      setError("Nao foi possivel criar a conta. Confirma os dados.");
+    } catch (err) {
+      setError("Erro ao criar conta.");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <AuthShell
-      title="Registo"
       subtitle="Crie a sua conta para aceder ao dashboard"
       footer={
         <div className="text-center">
@@ -44,45 +110,55 @@ export default function Register() {
         </div>
       }
     >
+      <div className="space-y-3 mb-6">
+        <AuthSocialButton
+          type="button"
+          onClick={handleGoogleLogin}
+          disabled={loading || !!socialLoading}
+          icon={
+            socialLoading === "google" ? (
+              <div className="w-5 h-5 border-2 border-[#2d6a4f] border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <FcGoogle className="w-5 h-5" />
+            )
+          }
+        >
+          <span>Continuar com Google</span>
+        </AuthSocialButton>
+      </div>
+
+      <AuthDivider />
+
       <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on">
-        <div className="relative">
-          <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9ca3af]" />
-          <input
-            type="text"
-            name="firstName"
-            autoComplete="given-name"
-            value={firstName}
-            onChange={(e) => setFirstName(e.target.value)}
-            placeholder="Primeiro nome"
-            className="w-full h-12 pl-12 pr-4 rounded-full bg-[#f9fafb] dark:bg-[#1a1a1a] border border-[#e5e7eb] dark:border-[#3a3a3a] text-[14px] text-[#1f2937] dark:text-white placeholder:text-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#2d6a4f]/20"
-          />
-        </div>
+        <AuthInput
+          icon={<User className="w-5 h-5" />}
+          type="text"
+          name="firstName"
+          autoComplete="given-name"
+          value={firstName}
+          onChange={(e) => setFirstName(e.target.value)}
+          placeholder="Primeiro nome"
+        />
 
-        <div className="relative">
-          <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9ca3af]" />
-          <input
-            type="text"
-            name="lastName"
-            autoComplete="family-name"
-            value={lastName}
-            onChange={(e) => setLastName(e.target.value)}
-            placeholder="Último nome"
-            className="w-full h-12 pl-12 pr-4 rounded-full bg-[#f9fafb] dark:bg-[#1a1a1a] border border-[#e5e7eb] dark:border-[#3a3a3a] text-[14px] text-[#1f2937] dark:text-white placeholder:text-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#2d6a4f]/20"
-          />
-        </div>
+        <AuthInput
+          icon={<User className="w-5 h-5" />}
+          type="text"
+          name="lastName"
+          autoComplete="family-name"
+          value={lastName}
+          onChange={(e) => setLastName(e.target.value)}
+          placeholder="Último nome"
+        />
 
-        <div className="relative">
-          <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9ca3af]" />
-          <input
-            type="email"
-            name="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="Email"
-            className="w-full h-12 pl-12 pr-4 rounded-full bg-[#f9fafb] dark:bg-[#1a1a1a] border border-[#e5e7eb] dark:border-[#3a3a3a] text-[14px] text-[#1f2937] dark:text-white placeholder:text-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#2d6a4f]/20"
-          />
-        </div>
+        <AuthInput
+          icon={<Mail className="w-5 h-5" />}
+          type="email"
+          name="email"
+          autoComplete="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="Email"
+        />
 
         {error && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/50 rounded-full px-4 py-3 text-[13px] text-red-700 dark:text-red-400 text-center">
@@ -90,13 +166,12 @@ export default function Register() {
           </div>
         )}
 
-        <button
+        <AuthPrimaryButton
           type="submit"
-          disabled={loading}
-          className="w-full h-12 bg-gradient-to-r from-[#2d6a4f] to-[#1b4332] text-white rounded-full text-[14px] font-semibold disabled:opacity-50"
+          disabled={loading || !!socialLoading}
         >
-          {loading ? "A enviar código…" : "Criar conta"}
-        </button>
+          Continuar
+        </AuthPrimaryButton>
       </form>
     </AuthShell>
   );

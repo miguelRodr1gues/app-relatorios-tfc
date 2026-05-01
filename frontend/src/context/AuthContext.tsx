@@ -17,60 +17,64 @@ export interface User {
   avatar?: string;
 }
 
-export interface AuthChallenge {
-  verificationToken: string;
-  email: string;
-  purpose: "register" | "login";
-  expiresIn: number;
-}
-
-export interface RegisterPayload {
-  firstName: string;
-  lastName: string;
-  email: string;
-}
-
-export interface VerifyCodePayload {
-  verificationToken: string;
-  code: string;
-}
-
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   loading: boolean;
-
-  requestLoginCode: (email: string) => Promise<AuthChallenge | null>;
-  requestRegisterCode: (payload: RegisterPayload) => Promise<AuthChallenge | null>;
-  verifyCode: (payload: VerifyCodePayload) => Promise<boolean>;
+  requestLoginCode: (email: string) => Promise<any>;
+  requestRegisterCode: (payload: any) => Promise<any>;
+  verifyCode: (payload: any) => Promise<boolean>;
   loginWithGoogle: (token: string) => Promise<boolean>;
   checkAuth: () => Promise<boolean>;
   logout: () => Promise<void>;
 }
 
-// ----------------------------
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// ----------------------------
 function mapUser(data: any): User {
-  const email = data?.email ?? "";
-  const name = data?.name?.trim() || (email ? email.split("@")[0] : "User");
-
   return {
     id: String(data?.id ?? ""),
-    name,
-    email,
+    name: data?.name ?? data?.email?.split("@")[0] ?? "User",
+    email: data?.email ?? "",
     avatar: data?.avatar ?? data?.picture,
   };
 }
 
-// ----------------------------
+function extractErrorMessage(error: any, fallback: string) {
+  const data = error?.response?.data;
+
+  if (typeof data === "string" && data.trim()) {
+    return data;
+  }
+
+  if (data?.error) {
+    return data.error;
+  }
+
+  if (data?.detail) {
+    return data.detail;
+  }
+
+  return error?.message || fallback;
+}
+
+function normalizeChallenge(data: any) {
+  if (!data) return null;
+
+  return {
+    ...data,
+    verificationToken: data.verificationToken ?? data.verification_token,
+    purpose: data.purpose,
+    email: data.email,
+    expiresIn: data.expiresIn ?? data.expires_in,
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const bootRef = useRef(false);
 
-  // ----------------------------
   const checkAuth = async (): Promise<boolean> => {
     try {
       const { data } = await api.get("/api/auth/user/");
@@ -82,7 +86,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // ----------------------------
   useEffect(() => {
     if (bootRef.current) return;
     bootRef.current = true;
@@ -93,22 +96,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })();
   }, []);
 
-  // ----------------------------
-  const requestLoginCode = async (email: string): Promise<AuthChallenge | null> => {
+  const requestLoginCode = async (email: string) => {
     try {
-      const { data } = await api.post("/api/auth/login-email/", { email });
-      return {
-        verificationToken: data.verification_token,
-        email: data.email,
-        purpose: data.purpose,
-        expiresIn: data.expires_in,
-      };
-    } catch {
-      return null;
+      const { data } = await api.post("/api/auth/login/", { email });
+      return normalizeChallenge(data);
+    } catch (error: any) {
+      return { error: extractErrorMessage(error, "Nao foi possivel enviar o código.") };
     }
   };
 
-  const requestRegisterCode = async (payload: RegisterPayload): Promise<AuthChallenge | null> => {
+  const requestRegisterCode = async (payload: any) => {
     try {
       const { data } = await api.post("/api/auth/register/", {
         first_name: payload.firstName,
@@ -116,18 +113,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email: payload.email,
       });
 
-      return {
-        verificationToken: data.verification_token,
-        email: data.email,
-        purpose: data.purpose,
-        expiresIn: data.expires_in,
-      };
-    } catch {
-      return null;
+      return normalizeChallenge(data);
+    } catch (error: any) {
+      return { error: extractErrorMessage(error, "Nao foi possivel criar a conta.") };
     }
   };
 
-  const verifyCode = async ({ verificationToken, code }: VerifyCodePayload) => {
+  const verifyCode = async ({ verificationToken, code }: any) => {
     try {
       await api.post("/api/auth/verify-code/", {
         verification_token: verificationToken,
@@ -150,7 +142,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // ----------------------------
   const logout = async () => {
     try {
       await api.post("/api/auth/logout/");
@@ -159,8 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // ----------------------------
-  const value = useMemo<AuthContextType>(
+  const value = useMemo(
       () => ({
         user,
         isAuthenticated: !!user,
@@ -175,6 +165,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       [user, loading]
   );
 
+  if (loading) return null;
+
   return (
       <AuthContext.Provider value={value}>
         {children}
@@ -182,9 +174,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// ----------------------------
 export function useAuth() {
-  const context = useContext(AuthContext);
-  if (!context) throw new Error("useAuth must be used within AuthProvider");
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  return ctx;
 }

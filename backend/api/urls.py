@@ -13,8 +13,7 @@ from .views import (
 urlpatterns = [
     # AUTH (JWT via cookies)
     path("auth/register/", RegisterView.as_view(), name="register"),
-    path("auth/login/", LoginEmailView.as_view(), name="login-legacy"),
-    path("auth/login-email/", LoginEmailView.as_view(), name="login-email"),
+    path("auth/login/", LoginEmailView.as_view(), name="login"),
     path("auth/verify-code/", VerifyCodeView.as_view(), name="verify-code"),
     path("auth/google/", GoogleLoginView.as_view(), name="google-login"),
     path("auth/logout/", LogoutView.as_view(), name="logout"),

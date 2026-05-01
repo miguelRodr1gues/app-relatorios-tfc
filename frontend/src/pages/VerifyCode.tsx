@@ -3,6 +3,8 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { KeyRound, Mail } from "lucide-react";
 import AuthShell from "../components/AuthShell";
+import AuthInput from "../components/auth/AuthInput";
+import AuthPrimaryButton from "../components/auth/AuthPrimaryButton";
 
 export default function VerifyCode() {
   const navigate = useNavigate();
@@ -69,7 +71,6 @@ export default function VerifyCode() {
 
   return (
     <AuthShell
-      title="Verificação"
       subtitle={subtitle}
       footer={
         <div className="text-center space-y-3">
@@ -95,18 +96,16 @@ export default function VerifyCode() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="relative">
-          <KeyRound className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9ca3af]" />
-          <input
-            type="text"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-            placeholder="Código de 6 dígitos"
-            className="w-full h-12 pl-12 pr-4 rounded-full bg-[#f9fafb] dark:bg-[#1a1a1a] border border-[#e5e7eb] dark:border-[#3a3a3a] text-[14px] text-[#1f2937] dark:text-white placeholder:text-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#2d6a4f]/20 tracking-[0.3em] text-center"
-          />
-        </div>
+        <AuthInput
+          icon={<KeyRound className="w-5 h-5" />}
+          type="text"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          placeholder="Introduza o código"
+          className="tracking-[0.3em] text-center pl-12"
+        />
 
         {error && (
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/50 rounded-full px-4 py-3 text-[13px] text-red-700 dark:text-red-400 text-center">
@@ -114,18 +113,14 @@ export default function VerifyCode() {
           </div>
         )}
 
-        <button
+        <AuthPrimaryButton
           type="submit"
           disabled={loading || !verificationToken || code.length !== 6}
-          className="w-full h-12 bg-gradient-to-r from-[#2d6a4f] to-[#1b4332] text-white rounded-full text-[14px] font-semibold disabled:opacity-50"
+          loadingLabel="A verificar..."
         >
-          {loading ? "A verificar..." : "Verificar e entrar"}
-        </button>
+          Continuar
+        </AuthPrimaryButton>
       </form>
-
-      <div className="mt-4 text-center text-[12px] text-[#9ca3af] dark:text-[#6b7280]">
-        O código expira em 10 minutos.
-      </div>
     </AuthShell>
   );
 }

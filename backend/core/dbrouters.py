@@ -14,6 +14,7 @@ class AuthRouter:
         "account",
         "socialaccount",
         "authtoken",
+        "api"
     }
 
     def db_for_read(self, model, **hints):

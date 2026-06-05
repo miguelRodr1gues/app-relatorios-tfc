@@ -85,7 +85,7 @@ POSTGRES_PORT=5432
 
 ---
 
-## 3. Subir o PostgreSQL (Docker)
+## 3. Executar o PostgreSQL (Docker)
 
 Na raiz do projeto:
 

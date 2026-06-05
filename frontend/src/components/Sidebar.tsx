@@ -1,4 +1,4 @@
-import { LayoutDashboard, FileText, PlusSquare, Database, Network, BarChart3, Settings, HelpCircle, LogOut, ChevronLeft, ChevronRight } from 'lucide-react';
+import { LayoutDashboard, FileText, PlusSquare, Network, BarChart3, Settings, LogOut, ChevronLeft, ChevronRight } from 'lucide-react';
 import logo from '../assets/logo.png';
 
 interface SidebarProps {

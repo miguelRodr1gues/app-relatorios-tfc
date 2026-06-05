@@ -1,13 +1,12 @@
-from datetime import timedelta
-
 import secrets
+from datetime import timedelta
 from smtplib import SMTPAuthenticationError
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.core.mail import EmailMessage
-from django.db import connection, transaction
+from django.db import transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -59,13 +58,13 @@ def _delete_jwt_cookies(response: JsonResponse) -> None:
 
 
 def _build_unique_username(email: str) -> str:
-    base = (email.split("@")[0] or "user").strip() or "user"
-    candidate = base
-    counter = 1
-    while User.objects.filter(username=candidate).exists():
-        candidate = f"{base}{counter}"
-        counter += 1
-    return candidate
+    username_base = (email.split("@")[0] or "user").strip() or "user"
+    candidate_username = username_base
+    suffix_counter = 1
+    while User.objects.filter(username=candidate_username).exists():
+        candidate_username = f"{username_base}{suffix_counter}"
+        suffix_counter += 1
+    return candidate_username
 
 
 def _generate_code() -> str:
@@ -73,15 +72,15 @@ def _generate_code() -> str:
 
 
 def _send_code_email(email: str, code: str, purpose: str) -> None:
-    subject = "Código de verificação"
-    action = "registo" if purpose == OTPChallenge.PURPOSE_REGISTER else "login"
+    email_subject = "Código de verificação"
+    action_label = "registo" if purpose == OTPChallenge.PURPOSE_REGISTER else "login"
     html_content = f"""
     <html>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
             <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
                 <h2>Código de Verificação</h2>
                 <p>Olá,</p>
-                <p>O teu código para <strong>{action}</strong> é:</p>
+                <p>O teu código para <strong>{action_label}</strong> é:</p>
                 <div style="background-color: #f0f0f0; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0;">
                     <h1 style="letter-spacing: 5px; color: #2d6a4f; margin: 0;">{code}</h1>
                 </div>
@@ -93,33 +92,32 @@ def _send_code_email(email: str, code: str, purpose: str) -> None:
     </html>
     """
 
-    # Send email via Django's email backend (configured in settings.py)
     email_message = EmailMessage(
-        subject=subject,
+        subject=email_subject,
         body=html_content,
         from_email=settings.DEFAULT_FROM_EMAIL,
         to=[email],
     )
-    email_message.content_subtype = "html"  # Send as HTML email
+    email_message.content_subtype = "html"
     email_message.send(fail_silently=False)
 
 
 def _issue_jwt_response(user: User):
-    refresh = RefreshToken.for_user(user)
+    refresh_token = RefreshToken.for_user(user)
     response = JsonResponse({"success": True, "user": UserSerializer(user).data})
-    _set_jwt_cookies(response, refresh)
+    _set_jwt_cookies(response, refresh_token)
     return response
 
 
 def _challenge_response(challenge: OTPChallenge):
-    expires_in = max(0, int((challenge.expires_at - timezone.now()).total_seconds()))
+    expires_in_seconds = max(0, int((challenge.expires_at - timezone.now()).total_seconds()))
     return Response(
         OTPChallengeResponseSerializer(
             {
                 "verification_token": challenge.verification_token,
                 "email": challenge.email,
                 "purpose": challenge.purpose,
-                "expires_in": expires_in,
+                "expires_in": expires_in_seconds,
             }
         ).data
     )
@@ -131,11 +129,11 @@ class RegisterView(APIView):
     def post(self, request):
         serializer = RegisterStartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
+        validated_data = serializer.validated_data
 
-        email = data["email"].lower().strip()
-        first_name = data["first_name"].strip()
-        last_name = data["last_name"].strip()
+        email = validated_data["email"].lower().strip()
+        first_name = validated_data["first_name"].strip()
+        last_name = validated_data["last_name"].strip()
 
         try:
             with transaction.atomic():
@@ -144,7 +142,13 @@ class RegisterView(APIView):
                     return Response({"error": "Este email já está registado."}, status=400)
 
                 if not user:
-                    user = User(email=email, username=_build_unique_username(email), first_name=first_name, last_name=last_name, is_active=False)
+                    user = User(
+                        email=email,
+                        username=_build_unique_username(email),
+                        first_name=first_name,
+                        last_name=last_name,
+                        is_active=False,
+                    )
                     user.set_unusable_password()
                     user.save()
                 else:
@@ -155,17 +159,17 @@ class RegisterView(APIView):
                         user.username = _build_unique_username(email)
                     user.save()
 
-                code = _generate_code()
+                verification_code = _generate_code()
                 challenge = OTPChallenge.objects.create(
                     email=email,
                     purpose=OTPChallenge.PURPOSE_REGISTER,
-                    code_hash=make_password(code),
+                    code_hash=make_password(verification_code),
                     first_name=first_name,
                     last_name=last_name,
                     payload={"first_name": first_name, "last_name": last_name},
                     expires_at=timezone.now() + timedelta(minutes=settings.OTP_CODE_EXPIRY_MINUTES),
                 )
-                _send_code_email(email, code, OTPChallenge.PURPOSE_REGISTER)
+                _send_code_email(email, verification_code, OTPChallenge.PURPOSE_REGISTER)
                 return _challenge_response(challenge)
         except SMTPAuthenticationError:
             return Response(
@@ -173,7 +177,7 @@ class RegisterView(APIView):
                 status=500,
             )
         except Exception as exc:
-            return Response({"error": f"Nao foi possivel enviar o código: {exc}"}, status=500)
+            return Response({"error": f"Não foi possível enviar o código: {exc}"}, status=500)
 
 
 class LoginEmailView(APIView):
@@ -190,14 +194,14 @@ class LoginEmailView(APIView):
                 if not user:
                     return Response({"error": "Conta inexistente ou não verificada."}, status=400)
 
-                code = _generate_code()
+                verification_code = _generate_code()
                 challenge = OTPChallenge.objects.create(
                     email=email,
                     purpose=OTPChallenge.PURPOSE_LOGIN,
-                    code_hash=make_password(code),
+                    code_hash=make_password(verification_code),
                     expires_at=timezone.now() + timedelta(minutes=settings.OTP_CODE_EXPIRY_MINUTES),
                 )
-                _send_code_email(email, code, OTPChallenge.PURPOSE_LOGIN)
+                _send_code_email(email, verification_code, OTPChallenge.PURPOSE_LOGIN)
                 return _challenge_response(challenge)
         except SMTPAuthenticationError:
             return Response(
@@ -205,7 +209,7 @@ class LoginEmailView(APIView):
                 status=500,
             )
         except Exception as exc:
-            return Response({"error": f"Nao foi possivel enviar o código: {exc}"}, status=500)
+            return Response({"error": f"Não foi possível enviar o código: {exc}"}, status=500)
 
 
 class VerifyCodeView(APIView):
@@ -214,10 +218,10 @@ class VerifyCodeView(APIView):
     def post(self, request):
         serializer = VerifyCodeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        token = serializer.validated_data["verification_token"]
+        verification_token = serializer.validated_data["verification_token"]
         code = serializer.validated_data["code"]
 
-        challenge = OTPChallenge.objects.filter(verification_token=token).first()
+        challenge = OTPChallenge.objects.filter(verification_token=verification_token).first()
         if not challenge:
             return Response({"error": "Código inválido."}, status=400)
         if challenge.is_consumed():
@@ -319,7 +323,7 @@ class RefreshView(APIView):
 
         try:
             refresh = RefreshToken(refresh_token)
-            new_access = str(refresh.access_token)
+            new_access_token = str(refresh.access_token)
         except TokenError:
             response = JsonResponse({"error": "Invalid refresh token"}, status=401)
             _delete_jwt_cookies(response)
@@ -328,7 +332,7 @@ class RefreshView(APIView):
         response = JsonResponse({"success": True})
         response.set_cookie(
             key=settings.JWT_ACCESS_COOKIE_NAME,
-            value=new_access,
+            value=new_access_token,
             **_cookie_kwargs(int(settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"].total_seconds())),
         )
         return response
@@ -339,33 +343,3 @@ class UserMeView(APIView):
 
     def get(self, request):
         return Response(UserSerializer(request.user).data)
-
-
-# =========================================================
-# API EXAMPLE
-# =========================================================
-
-class EntityListAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        query = request.query_params.get("q", "").lower()
-        schema = request.query_params.get("schema", "public")
-
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT table_schema, table_name
-                FROM information_schema.tables
-                WHERE table_schema = %s
-                ORDER BY table_name
-                """,
-                [schema],
-            )
-            rows = cursor.fetchall()
-
-        return Response([
-            {"schema": s, "table": t}
-            for s, t in rows
-            if not query or query in t.lower()
-        ])

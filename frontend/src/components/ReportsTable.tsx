@@ -1,38 +1,182 @@
-import { REPORTS, TABLES } from '../data/mockData';
-import { Download, Copy, Trash2, ExternalLink } from 'lucide-react';
-import { useMemo } from 'react';
-
-const categoryStyles: Record<string, string> = {
-  Vendas: 'bg-[#d1fae5] text-[#065f46]',
-  Clientes: 'bg-[#dbeafe] text-[#1e40af]',
-  Produtos: 'bg-[#e0e7ff] text-[#4338ca]',
-  Operacional: 'bg-[#fef3c7] text-[#92400e]',
-};
+import { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, Copy, ExternalLink, Trash2 } from 'lucide-react';
+import { deleteReport, getReports, downloadReport, type SavedReport } from '../lib/api';
+import DeleteReportConfirmModal from './DeleteReportConfirmModal';
+import ExportMenu from './ExportMenu';
+import { useFloating, offset, flip, shift, autoUpdate } from '@floating-ui/react';
 
 interface ReportsTableProps {
   searchQuery?: string;
+  onOpen?: (id: string) => void;
+  onDownload?: (id: string, format?: 'json' | 'csv' | 'pdf') => void;
+  onCopy?: (id: string) => void;
+  onDelete?: (id: string) => void;
 }
 
-export default function ReportsTable({ searchQuery = '' }: ReportsTableProps) {
+export const formatDateTime = (raw?: string) => {
+  if (!raw) return '';
+
+  const d = new Date(raw);
+
+  const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+  const day = d.getDate();
+  const month = months[d.getMonth()];
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+
+  return `${day} ${month} ${hours}:${minutes}`;
+};
+
+export default function ReportsTable({ searchQuery = '', onOpen, onDownload, onCopy, onDelete }: ReportsTableProps) {
+  const [reports, setReports] = useState<SavedReport[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [openExportId, setOpenExportId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Floating UI setup
+  const { refs, floatingStyles } = useFloating({
+    placement: 'bottom-start',
+    middleware: [
+      offset(8),
+      flip(),
+      shift({ padding: 8 }),
+    ],
+    whileElementsMounted: autoUpdate,
+  });
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      setLoading(true);
+      setErrorMessage(null);
+      try {
+        const remote = await getReports();
+        if (mounted) {
+          setReports(Array.isArray(remote) ? remote : []);
+        }
+      } catch {
+        if (mounted) {
+          setReports([]);
+          setErrorMessage('Nao foi possivel carregar os relatorios.');
+        }
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    void load();
+    return () => { mounted = false; };
+  }, []);
+
+  // Set Floating UI reference when menu opens
+  useEffect(() => {
+    if (!openExportId) return;
+
+    const button = document.querySelector<HTMLButtonElement>(`button[data-export-id="${openExportId}"]`);
+    if (button) {
+      refs.setReference(button);
+    }
+  }, [openExportId, refs]);
+
+  // Handle ESC key to close menu
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenExportId(null);
+    };
+
+    if (openExportId) {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [openExportId]);
+
   const filteredReports = useMemo(() => {
-    if (!searchQuery.trim()) return REPORTS;
+    if (!searchQuery.trim()) return reports;
 
     const query = searchQuery.toLowerCase();
-    return REPORTS.filter(report =>
-      report.name.toLowerCase().includes(query) ||
-      report.category.toLowerCase().includes(query) ||
-      TABLES.find(t => t.key === report.table)?.name.toLowerCase().includes(query)
-    );
-  }, [searchQuery]);
+
+    return reports.filter(report => {
+      const name = (report.name).toString().toLowerCase();
+      const table = (report.table).toString().toLowerCase();
+
+      return name.includes(query) || table.includes(query);
+    });
+  }, [searchQuery, reports]);
+
+  // Default handlers (will be used if corresponding props are not provided)
+  const handleOpen = (id: string) => {
+    const url = `/reports/${id}`;
+    window.open(url, '_blank');
+  };
+
+  const handleDownload = async (reportId: string, format: 'json' | 'csv' | 'pdf') => {
+    setExporting(reportId);
+    try {
+      if (typeof onDownload === 'function') {
+        onDownload(reportId, format);
+        return;
+      }
+      await downloadReport(reportId, format);
+    } finally {
+      setExporting(null);
+      setOpenExportId(null);
+    }
+  };
+
+  const toggleExportMenu = (reportId: string) => {
+    setOpenExportId(prev => prev === reportId ? null : reportId);
+  };
+
+  const handleCopy = async (reportId: string) => {
+    const url = `${window.location.origin}/reports/${reportId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      // Could display a toast here; fallback is silent
+    } catch {
+      // ignore copy errors
+    }
+  };
+
+  const handleDelete = (reportId: string) => {
+    setPendingDeleteId(reportId);
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDeleteId) return;
+    setDeletingId(pendingDeleteId);
+    setErrorMessage(null);
+    try {
+      if (typeof onDelete === 'function') {
+        onDelete(pendingDeleteId);
+      } else {
+        await deleteReport(pendingDeleteId);
+      }
+      setReports(prev => prev.filter(r => r.id !== pendingDeleteId));
+      setPendingDeleteId(null);
+    } catch {
+      setErrorMessage('Nao foi possivel eliminar o relatorio.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const reportPendingDelete = pendingDeleteId ? reports.find(r => r.id === pendingDeleteId) : null;
 
   return (
-    <div className="bg-white dark:bg-[#2a2a2a] rounded-[20px] shadow-sm border border-[#f3f4f6] dark:border-[#3a3a3a] hover:shadow-md transition-all animate-[fadeUp_0.4s_ease_both]">
+    <>
+      <div className="bg-white dark:bg-[#2a2a2a] rounded-[20px] shadow-sm border border-[#f3f4f6] dark:border-[#3a3a3a] hover:shadow-md transition-all animate-[fadeUp_0.4s_ease_both] overflow-hidden">
       {/* Table */}
       <div className="overflow-x-auto">
+        {errorMessage ? (
+          <div className="px-6 py-4 text-[13px] text-[#b91c1c] dark:text-[#fca5a5]">{errorMessage}</div>
+        ) : null}
         {filteredReports.length === 0 ? (
           <div className="px-6 py-12 text-center">
             <div className="text-[14px] text-[#9ca3af] dark:text-[#6b7280]">
-              Nenhum relatório encontrado para "{searchQuery}"
+              {loading ? 'A carregar relatórios...' : `Nenhum relatório encontrado para "${searchQuery}"`}
             </div>
           </div>
         ) : (
@@ -55,40 +199,54 @@ export default function ReportsTable({ searchQuery = '' }: ReportsTableProps) {
                   style={{ animationDelay: `${index * 0.04}s` }}
                 >
                   <td className="px-6 py-4 border-t border-[#f3f4f6] dark:border-[#3a3a3a]">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#f0fdf4] to-[#dcfce7] dark:from-[#1b4332] dark:to-[#2d6a4f] flex items-center justify-center text-[18px]">
-                      {report.emoji}
-                    </div>
                   </td>
                   <td className="px-6 py-4 border-t border-[#f3f4f6] dark:border-[#3a3a3a]">
                     <div className="font-semibold text-[14px] text-[#1f2937] dark:text-white">{report.name}</div>
                   </td>
+                  <td className="px-6 py-4 text-[13px] text-[#1f2937] dark:text-white font-medium border-t border-[#f3f4f6] dark:border-[#3a3a3a]">
+                    {report.table}
+                  </td>
                   <td className="px-6 py-4 border-t border-[#f3f4f6] dark:border-[#3a3a3a]">
-                    <div className="text-[13px] text-[#6b7280] dark:text-[#9ca3af]">
-                      {TABLES.find(t => t.key === report.table)?.name || report.table}
+                    <div className="text-[13px] text-[#1f2937] dark:text-white font-medium">
+                      {(((report as any).rows ?? 0) as number).toLocaleString('pt-PT')}
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-[13px] text-[#1f2937] dark:text-white font-medium border-t border-[#f3f4f6] dark:border-[#3a3a3a]">
-                    {report.rows.toLocaleString('pt-PT')}
+                  <td className="px-6 py-4 border-t border-[#f3f4f6] dark:border-[#3a3a3a]">
+                    <div className="text-[13px] text-[#9ca3af] dark:text-[#6b7280]">{formatDateTime(report.created_at)}</div>
                   </td>
                   <td className="px-6 py-4 border-t border-[#f3f4f6] dark:border-[#3a3a3a]">
-                    <div className="text-[13px] text-[#9ca3af] dark:text-[#6b7280]">{report.date}</div>
-                  </td>
-                  <td className="px-6 py-4 border-t border-[#f3f4f6] dark:border-[#3a3a3a]">
-                    <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex gap-1.5 opacity-100 transition-opacity">
                       <button className="w-8 h-8 rounded-full border border-[#e5e7eb] dark:border-[#3a3a3a] bg-white dark:bg-[#1a1a1a] flex items-center justify-center cursor-pointer transition-all hover:bg-[#f9fafb] dark:hover:bg-[#2a2a2a] hover:border-[#2d6a4f] hover:text-[#2d6a4f]"
-                              title="Abrir">
+                              title="Abrir"
+                              onClick={() => {
+                          if (typeof onOpen === 'function') return onOpen(report.id);
+                          handleOpen(report.id);
+                        }}>
                         <ExternalLink className="w-3.5 h-3.5" />
                       </button>
+                      <div className="relative">
+                        <button
+                            className="px-3 h-8 rounded-full border border-[#e5e7eb] dark:border-[#3a3a3a] bg-white dark:bg-[#1a1a1a] flex items-center gap-1.5 cursor-pointer transition-all hover:bg-[#f9fafb] dark:hover:bg-[#2a2a2a] hover:border-[#2d6a4f] hover:text-[#2d6a4f] text-[12px] font-semibold disabled:opacity-70 disabled:cursor-not-allowed"
+                            title="Exportar"
+                            data-export-id={report.id}
+                            onClick={() => toggleExportMenu(report.id)}
+                            disabled={exporting === report.id}
+                        >
+                          <span>Exportar</span>
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                       <button className="w-8 h-8 rounded-full border border-[#e5e7eb] dark:border-[#3a3a3a] bg-white dark:bg-[#1a1a1a] flex items-center justify-center cursor-pointer transition-all hover:bg-[#f9fafb] dark:hover:bg-[#2a2a2a] hover:border-[#2d6a4f] hover:text-[#2d6a4f]"
-                              title="Download">
-                        <Download className="w-3.5 h-3.5" />
-                      </button>
-                      <button className="w-8 h-8 rounded-full border border-[#e5e7eb] dark:border-[#3a3a3a] bg-white dark:bg-[#1a1a1a] flex items-center justify-center cursor-pointer transition-all hover:bg-[#f9fafb] dark:hover:bg-[#2a2a2a] hover:border-[#2d6a4f] hover:text-[#2d6a4f]"
-                              title="Copiar">
+                              title="Copiar"
+                              onClick={() => {
+                          if (typeof onCopy === 'function') return onCopy(report.id);
+                          void handleCopy(report.id);
+                        }}>
                         <Copy className="w-3.5 h-3.5" />
                       </button>
                       <button className="w-8 h-8 rounded-full border border-[#e5e7eb] dark:border-[#3a3a3a] bg-white dark:bg-[#1a1a1a] flex items-center justify-center cursor-pointer transition-all hover:bg-[#fef2f2] dark:hover:bg-[#3a1a1a] hover:border-[#ef4444] hover:text-[#ef4444]"
-                              title="Eliminar">
+                              title="Eliminar"
+                              onClick={() => handleDelete(report.id)}>
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -99,6 +257,23 @@ export default function ReportsTable({ searchQuery = '' }: ReportsTableProps) {
           </table>
         )}
       </div>
-    </div>
+      </div>
+
+      <ExportMenu
+        open={Boolean(openExportId)}
+        onClose={() => setOpenExportId(null)}
+        onSelect={(format) => void handleDownload(openExportId!, format)}
+        floatingRef={refs.setFloating}
+        floatingStyles={floatingStyles}
+      />
+
+      <DeleteReportConfirmModal
+        open={Boolean(pendingDeleteId)}
+        reportName={reportPendingDelete?.name}
+        isDeleting={deletingId === pendingDeleteId}
+        onCancel={() => setPendingDeleteId(null)}
+        onConfirm={() => void confirmDelete()}
+      />
+    </>
   );
 }

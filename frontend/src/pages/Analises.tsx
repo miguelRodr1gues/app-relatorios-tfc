@@ -1,23 +1,9 @@
 import { Calendar } from 'lucide-react';
 import BarChart from '../components/BarChart';
 import KpiCard from '../components/KpiCard';
-import { KPIS, REPORTS, ALERTS } from '../data/mockData';
+import { KPIS } from '../data/mockData';
 
 export default function Analises() {
-  const categories = [
-    { name: 'Utentes', count: REPORTS.filter(r => r.category === 'Utentes').length, percentage: 28, color: '#2d6a4f' },
-    { name: 'Episódios', count: REPORTS.filter(r => r.category === 'Episódios').length, percentage: 24, color: '#40916c' },
-    { name: 'Diário Clínico', count: REPORTS.filter(r => r.category === 'Diário Clínico').length, percentage: 20, color: '#52b788' },
-    { name: 'Equipa', count: REPORTS.filter(r => r.category === 'Equipa').length, percentage: 14, color: '#74c69d' },
-    { name: 'Registos', count: REPORTS.filter(r => r.category === 'Registos').length, percentage: 14, color: '#95d5b2' },
-  ];
-
-  const activity = [
-    { action: 'Relatório criado', name: REPORTS[0]?.name ?? 'Relatório', time: 'Há 2 horas', icon: '📊' },
-    { action: 'Exportação concluída', name: 'Diário clínico — notas recentes', time: 'Há 5 horas', icon: '⬇️' },
-    { action: 'Alerta', name: ALERTS[0]?.message ?? 'Aviso', time: 'Hoje', icon: '🔔' },
-  ];
-
   return (
     <div className="flex-1 overflow-y-auto px-8 py-8 bg-[#fafafa] dark:bg-[#1a1a1a]">
       {/* Page Header */}
@@ -46,51 +32,6 @@ export default function Analises() {
       {/* Charts Section */}
       <div className="grid grid-cols-1 gap-6 mb-6">
         <BarChart />
-      </div>
-
-      {/* Additional Analytics */}
-      <div className="grid grid-cols-2 gap-6">
-        {/* Categorias */}
-        <div className="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-sm border border-[#f3f4f6] dark:border-[#3a3a3a] p-6 hover:shadow-md transition-all">
-          <h3 className="text-[17px] font-semibold text-[#1f2937] dark:text-white mb-5">Categorias Mais Usadas</h3>
-          <div className="space-y-4">
-            {categories.map((category) => (
-              <div key={category.name}>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[13px] font-medium text-[#1f2937] dark:text-white">{category.name}</span>
-                  <span className="text-[13px] font-semibold text-[#6b7280] dark:text-[#9ca3af]">
-                    {category.count} relatórios
-                  </span>
-                </div>
-                <div className="w-full h-2 bg-[#f3f4f6] dark:bg-[#1a1a1a] rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all"
-                    style={{ width: `${category.percentage}%`, backgroundColor: category.color }}
-                  ></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Atividade Recente */}
-        <div className="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-sm border border-[#f3f4f6] dark:border-[#3a3a3a] p-6 hover:shadow-md transition-all">
-          <h3 className="text-[17px] font-semibold text-[#1f2937] dark:text-white mb-5">Atividade Recente</h3>
-          <div className="space-y-4">
-            {activity.map((item, index) => (
-              <div key={index} className="flex items-start gap-3 pb-4 border-b border-[#f3f4f6] dark:border-[#3a3a3a] last:border-0 last:pb-0">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#f0fdf4] to-[#dcfce7] dark:from-[#1b4332] dark:to-[#2d6a4f] flex items-center justify-center flex-shrink-0 text-[16px]">
-                  {item.icon}
-                </div>
-                <div className="flex-1">
-                  <div className="text-[13px] font-medium text-[#1f2937] dark:text-white">{item.name}</div>
-                  <div className="text-[12px] text-[#9ca3af] dark:text-[#6b7280] mt-0.5">{item.action}</div>
-                </div>
-                <div className="text-[11px] text-[#9ca3af] dark:text-[#6b7280] whitespace-nowrap">{item.time}</div>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   );

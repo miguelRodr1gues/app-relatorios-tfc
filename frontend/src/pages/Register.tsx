@@ -92,7 +92,7 @@ export default function Register() {
           `/verify-code?token=${encodeURIComponent(challenge.verificationToken)}&email=${encodeURIComponent(challenge.email)}&purpose=register&first_name=${encodeURIComponent(normalizedFirstName)}&last_name=${encodeURIComponent(normalizedLastName)}`,
           { replace: true }
       );
-    } catch (err) {
+    } catch {
       setError("Erro ao criar conta.");
     } finally {
       setLoading(false);

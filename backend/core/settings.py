@@ -50,7 +50,6 @@ INSTALLED_APPS = [
 # =========================================================
 # MIDDLEWARE
 # =========================================================
-
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
 
@@ -211,3 +210,6 @@ OTP_CODE_LENGTH = env.int("OTP_CODE_LENGTH", default=6)
 # =========================================================
 
 STATIC_URL = "static/"
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')

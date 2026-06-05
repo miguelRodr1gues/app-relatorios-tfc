@@ -1,12 +1,27 @@
-import { useState } from 'react';
-import { X, Download, FileText, FileJson, Save, Check, Plus, Trash2 } from 'lucide-react';
-import { TABLES } from '../data/mockData';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { X, Plus, Trash2, ArrowLeft, ArrowRight } from 'lucide-react';
 import TableCard from './TableCard';
 import SearchBar from './SearchBar';
+import { createReport, fetchTableDefinitions, previewReport, type ApiTableDefinition } from '../lib/api';
+import { useWizard } from '../context/WizardContext';
 
 interface WizardStep {
   id: string;
   label: string;
+}
+
+interface FilterState {
+  column: string;
+  operator: string;
+  value: string;
+}
+
+interface AvailableColumn {
+  tableKey: string;
+  tableName: string;
+  columnName: string;
+  columnLabel: string;
+  key: string;
 }
 
 const STEPS: WizardStep[] = [
@@ -15,118 +30,336 @@ const STEPS: WizardStep[] = [
   { id: 'filters', label: 'Filtros' },
   { id: 'grouping', label: 'Agrupamento' },
   { id: 'preview', label: 'Preview' },
-  { id: 'actions', label: 'Ações' },
-  { id: 'settings', label: 'Configurações' },
 ];
 
-const CHART_COLORS = [
-  '#2d6a4f', '#40916c', '#52796f', '#1e88e5', '#e63946', '#f77f00', '#1b4332'
-];
+const EMPTY_FILTER: FilterState = { column: '', operator: '=', value: '' };
 
 interface ReportWizardProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+function buildColumnKey(tableKey: string, columnName: string) {
+  return `${tableKey}::${columnName}`;
+}
+
 export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
+  const wizardContext = useWizard();
   const [currentStep, setCurrentStep] = useState(1);
-  const [selectedTables, setSelectedTables] = useState<string[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  
-  // Step 2: Columns
+  const [baseTableKey, setBaseTableKey] = useState('');
+  const [selectedRelatedTables, setSelectedRelatedTables] = useState<string[]>([]);
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
-  
-  // Step 3: Filters
-  const [filters, setFilters] = useState<Array<{ column: string; operator: string; value: string }>>([
-    { column: '', operator: '=', value: '' }
-  ]);
-  
-  // Step 4: Grouping
+  const [filters, setFilters] = useState<FilterState[]>([EMPTY_FILTER]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [tables, setTables] = useState<ApiTableDefinition[]>([]);
+  const [isLoadingTables, setIsLoadingTables] = useState(false);
+  const [tablesError, setTablesError] = useState('');
+
   const [groupByColumn, setGroupByColumn] = useState('');
   const [aggregateFunctions, setAggregateFunctions] = useState<string[]>([]);
   const [showSubtotals, setShowSubtotals] = useState(false);
   const [showGrandTotal, setShowGrandTotal] = useState(true);
   const [orderBy, setOrderBy] = useState('');
-  
-  // Step 6: Actions
-  const [selectedActions, setSelectedActions] = useState<string[]>([]);
-  
-  // Step 7: Settings
-  const [schedule, setSchedule] = useState('never');
-  const [emailTo, setEmailTo] = useState('');
-  const [defaultFormat, setDefaultFormat] = useState('csv');
-  const [chartColor, setChartColor] = useState('#2d6a4f');
-  const [timezone, setTimezone] = useState('Europe/Lisbon (UTC+0/+1)');
-  const [rowsPerPage, setRowsPerPage] = useState('10');
+
+  const [reportName, setReportName] = useState('');
+  const [reportDescription, setReportDescription] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [previewRows, setPreviewRows] = useState<Array<Record<string, unknown>>>([]);
+  const [previewColumns, setPreviewColumns] = useState<string[]>([]);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+
+  const loadTables = useCallback(async () => {
+    setIsLoadingTables(true);
+    setTablesError('');
+
+    try {
+      const data = await fetchTableDefinitions({ schema: 'public' });
+      setTables(data);
+    } catch (error) {
+      setTables([]);
+      setTablesError(error instanceof Error ? error.message : 'Não foi possível carregar as tabelas da API.');
+    } finally {
+      setIsLoadingTables(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    void loadTables();
+  }, [isOpen, loadTables]);
+
+  useEffect(() => {
+    setSelectedRelatedTables([]);
+    setSelectedColumns([]);
+    setFilters([EMPTY_FILTER]);
+    setGroupByColumn('');
+    setAggregateFunctions([]);
+    setShowSubtotals(false);
+    setShowGrandTotal(true);
+    setOrderBy('');
+    setPreviewRows([]);
+    setPreviewColumns([]);
+    setPreviewError('');
+  }, [baseTableKey]);
+
+  const tableLookup = useMemo(
+    () => new Map(tables.map((table) => [table.key, table])),
+    [tables]
+  );
+
+  const filteredTables = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    return tables.filter((table) => {
+      if (!normalizedQuery) return true;
+      return (
+        table.name.toLowerCase().includes(normalizedQuery) ||
+        table.key.toLowerCase().includes(normalizedQuery) ||
+        table.schema?.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [tables, searchQuery]);
+
+  const baseTableDefinition = baseTableKey ? tableLookup.get(baseTableKey) : undefined;
+
+  const relatedTableOptions = useMemo(
+    () =>
+      (baseTableDefinition?.related_tables || [])
+        .map((relation) => {
+          const table = tableLookup.get(relation.key);
+          if (!table) return null;
+
+          return {
+            ...table,
+            relation,
+          };
+        })
+        .filter((table): table is ApiTableDefinition & { relation: NonNullable<ApiTableDefinition['related_tables']>[number] } => Boolean(table)),
+    [baseTableDefinition, tableLookup]
+  );
+
+  const includedTables = useMemo(() => {
+    const includedTableKeys = baseTableKey ? [baseTableKey, ...selectedRelatedTables] : [];
+    return includedTableKeys
+      .map((tableKey) => tableLookup.get(tableKey))
+      .filter((table): table is ApiTableDefinition => Boolean(table));
+  }, [baseTableKey, selectedRelatedTables, tableLookup]);
+
+  const availableColumns = useMemo<AvailableColumn[]>(
+    () =>
+      includedTables.flatMap((table) =>
+        table.columns.map((column) => ({
+          tableKey: table.key,
+          tableName: table.name,
+          columnName: column.n,
+          columnLabel: column.label,
+          key: buildColumnKey(table.key, column.n),
+        }))
+      ),
+    [includedTables]
+  );
+
+  const availableColumnsByKey = useMemo(
+    () => new Map(availableColumns.map((column) => [column.key, column])),
+    [availableColumns]
+  );
+
+  useEffect(() => {
+    setSelectedColumns((prev) => prev.filter((columnKey) => availableColumnsByKey.has(columnKey)));
+    setFilters((prev) => prev.map((filter) => (
+      filter.column && !availableColumnsByKey.has(filter.column)
+        ? { ...filter, column: '', value: '' }
+        : filter
+    )));
+    if (groupByColumn && !availableColumnsByKey.has(groupByColumn)) {
+      setGroupByColumn('');
+    }
+    if (orderBy && !availableColumnsByKey.has(orderBy)) {
+      setOrderBy('');
+    }
+  }, [availableColumnsByKey, groupByColumn, orderBy]);
+
+  const selectedColumnLabels = useMemo(
+    () =>
+      selectedColumns
+        .map((columnKey) => availableColumnsByKey.get(columnKey))
+        .filter((column): column is AvailableColumn => Boolean(column)),
+    [availableColumnsByKey, selectedColumns]
+  );
+
+  const activeFilters = useMemo(
+    () => filters.filter((filter) => filter.column && filter.value),
+    [filters]
+  );
+
+  const normalizedColumnSelections = useMemo(
+    () =>
+      selectedColumns
+        .map((columnKey) => {
+          const column = availableColumnsByKey.get(columnKey);
+          if (!column) return null;
+          return {
+            table: column.tableKey,
+            column: column.columnName,
+          };
+        })
+        .filter((column): column is { table: string; column: string } => Boolean(column)),
+    [availableColumnsByKey, selectedColumns]
+  );
+
+  const normalizedPreviewFilters = useMemo(
+    () =>
+      activeFilters
+        .map((activeFilter) => {
+          const selectedColumn = availableColumnsByKey.get(activeFilter.column);
+          if (!selectedColumn) return null;
+          return {
+            table: selectedColumn.tableKey,
+            column: selectedColumn.columnName,
+            operator: activeFilter.operator,
+            value: activeFilter.value,
+          };
+        })
+        .filter((normalizedFilter): normalizedFilter is { table: string; column: string; operator: string; value: string } => Boolean(normalizedFilter)),
+    [activeFilters, availableColumnsByKey]
+  );
+
+  useEffect(() => {
+    if (currentStep !== 5) return;
+    if (!baseTableKey || normalizedColumnSelections.length === 0) {
+      setPreviewRows([]);
+      setPreviewColumns([]);
+      setPreviewError('');
+      setIsLoadingPreview(false);
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadPreview = async () => {
+      setIsLoadingPreview(true);
+      setPreviewError('');
+
+      try {
+        const response = await previewReport({
+          base_table: baseTableKey,
+          related_tables: selectedRelatedTables,
+          columns: normalizedColumnSelections,
+          filters: normalizedPreviewFilters,
+        });
+
+        if (!isMounted) return;
+        setPreviewColumns(response.columns);
+        setPreviewRows(response.rows.slice(0, 10));
+      } catch (error) {
+        if (!isMounted) return;
+        setPreviewRows([]);
+        setPreviewColumns([]);
+        setPreviewError(error instanceof Error ? error.message : 'Não foi possível carregar a pré-visualização.');
+      } finally {
+        if (isMounted) setIsLoadingPreview(false);
+      }
+    };
+
+    void loadPreview();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [baseTableKey, currentStep, normalizedColumnSelections, normalizedPreviewFilters, selectedRelatedTables]);
+
+  const toggleRelatedTable = (tableKey: string) => {
+    setSelectedRelatedTables((prev) =>
+      prev.includes(tableKey) ? prev.filter((key) => key !== tableKey) : [...prev, tableKey]
+    );
+  };
+
+  const toggleColumn = (columnKey: string) => {
+    setSelectedColumns((prev) =>
+      prev.includes(columnKey) ? prev.filter((key) => key !== columnKey) : [...prev, columnKey]
+    );
+  };
+
+  const toggleAggregateFunction = (func: string) => {
+    setAggregateFunctions((prev) =>
+      prev.includes(func) ? prev.filter((item) => item !== func) : [...prev, func]
+    );
+  };
+
+  const addFilter = () => {
+    setFilters((prev) => [...prev, EMPTY_FILTER]);
+  };
+
+  const removeFilter = (index: number) => {
+    setFilters((prev) => prev.filter((_, filterIndex) => filterIndex !== index));
+  };
+
+  const updateFilter = (index: number, field: keyof FilterState, value: string) => {
+    setFilters((prev) =>
+      prev.map((filter, filterIndex) => (
+        filterIndex === index ? { ...filter, [field]: value } : filter
+      ))
+    );
+  };
+
+  const handlePrev = () => {
+    if (currentStep > 1) {
+      setCurrentStep((prev) => prev - 1);
+    }
+  };
+
+  const handleNext = async () => {
+    if (currentStep < STEPS.length) {
+      setCurrentStep((prev) => prev + 1);
+      return;
+    }
+
+    setErrorMessage('');
+
+    if (!reportName.trim()) {
+      setErrorMessage('Por favor indique um nome para o relatório');
+      return;
+    }
+
+    if (!baseTableKey) {
+      setErrorMessage('Selecione uma tabela principal');
+      return;
+    }
+
+    if (normalizedColumnSelections.length === 0) {
+      setErrorMessage('Selecione pelo menos uma coluna para incluir no relatório');
+      return;
+    }
+
+    try {
+      setIsCreating(true);
+      await createReport({
+        name: reportName.trim(),
+        description: reportDescription.trim(),
+        base_table: baseTableKey,
+        related_tables: selectedRelatedTables,
+        columns: normalizedColumnSelections,
+        filters: normalizedPreviewFilters,
+        generate_files: false,
+      });
+      wizardContext.closeWizard();
+      onClose();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Falha ao guardar o relatório');
+    } finally {
+      setIsCreating(false);
+    }
+  };
 
   if (!isOpen) return null;
 
   const progress = ((currentStep - 1) / (STEPS.length - 1)) * 100;
 
-  const handleNext = () => {
-    if (currentStep < STEPS.length) {
-      setCurrentStep(currentStep + 1);
-    } else {
-      // Generate report
-      onClose();
-    }
-  };
-
-  const handlePrev = () => {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
-    }
-  };
-
-  const filteredTables = TABLES.filter(
-    table =>
-      !searchQuery ||
-      table.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      table.key.includes(searchQuery.toLowerCase())
-  );
-
-  // Get all available columns from selected tables
-  const availableColumns = selectedTables.flatMap(tableKey => {
-    const table = TABLES.find(t => t.key === tableKey);
-    return table ? table.columns.map(col => ({ table: table.name, column: col.label, key: `${tableKey}.${col.n}` })) : [];
-  });
-
-  const toggleColumn = (columnKey: string) => {
-    setSelectedColumns(prev => 
-      prev.includes(columnKey) ? prev.filter(c => c !== columnKey) : [...prev, columnKey]
-    );
-  };
-
-  const toggleAggregateFunction = (func: string) => {
-    setAggregateFunctions(prev =>
-      prev.includes(func) ? prev.filter(f => f !== func) : [...prev, func]
-    );
-  };
-
-  const addFilter = () => {
-    setFilters([...filters, { column: '', operator: '=', value: '' }]);
-  };
-
-  const removeFilter = (index: number) => {
-    setFilters(filters.filter((_, i) => i !== index));
-  };
-
-  const updateFilter = (index: number, field: 'column' | 'operator' | 'value', value: string) => {
-    const newFilters = [...filters];
-    newFilters[index][field] = value;
-    setFilters(newFilters);
-  };
-
-  const toggleAction = (action: string) => {
-    setSelectedActions(prev =>
-      prev.includes(action) ? prev.filter(a => a !== action) : [...prev, action]
-    );
-  };
-
   return (
     <div className="fixed inset-0 bg-black/35 backdrop-blur-sm z-[100] flex items-start justify-center overflow-y-auto">
       <div className="bg-[#fafafa] dark:bg-[#1a1a1a] w-full min-h-screen flex flex-col animate-[fadeUp_0.2s_ease]">
-        {/* Header */}
         <div className="bg-white dark:bg-[#2a2a2a] border-b-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] flex-shrink-0">
           <div className="w-full px-7">
             <div className="flex items-center justify-between w-full py-5 pb-4">
@@ -137,14 +370,13 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                 </div>
               </div>
               <button
-                onClick={onClose}
+                onClick={() => { wizardContext.closeWizard(); onClose(); }}
                 className="w-8 h-8 rounded-full border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] bg-transparent text-[#4a6358] dark:text-[#9ca3af] flex items-center justify-center cursor-pointer transition-all hover:bg-[#f4f6f8] dark:hover:bg-[#1a1a1a]"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Progress Rail */}
             <div className="w-full pb-4">
               <div className="relative flex flex-col gap-2">
                 <div className="flex justify-between relative z-[2]">
@@ -160,8 +392,8 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                             isActive
                               ? 'bg-[#40916c] text-white shadow-[0_0_0_4px_#d8f3dc] dark:shadow-[0_0_0_4px_rgba(45,106,79,0.3)]'
                               : isDone
-                              ? 'bg-[#1b4332] text-white'
-                              : 'bg-[#d1e8d4] dark:bg-[#3a3a3a] text-[#52796f] dark:text-[#6b7280]'
+                                ? 'bg-[#1b4332] text-white'
+                                : 'bg-[#d1e8d4] dark:bg-[#3a3a3a] text-[#52796f] dark:text-[#6b7280]'
                           }`}
                         >
                           {isDone ? '✓' : stepNum}
@@ -171,8 +403,8 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                             isActive
                               ? 'text-[#1b4332] dark:text-[#52b788] font-bold'
                               : isDone
-                              ? 'text-[#1b4332] dark:text-white'
-                              : 'text-[#8fa899] dark:text-[#6b7280]'
+                                ? 'text-[#1b4332] dark:text-white'
+                                : 'text-[#8fa899] dark:text-[#6b7280]'
                           }`}
                         >
                           {step.label}
@@ -185,139 +417,121 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                   <div
                     className="absolute top-0 left-0 h-full bg-[#40916c] rounded-sm transition-all duration-400"
                     style={{ width: `${progress}%` }}
-                  ></div>
+                  />
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto w-full">
           <div className="w-full px-7 py-6">
-            {/* Step 1: Data Source */}
             {currentStep === 1 && (
-              <div>
-                <div className="mb-3.5">
+              <div className="space-y-6">
+                <div>
                   <label className="block text-[12px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-2">
-                    Selecionar tabelas ou views {selectedTables.length > 0 && `(${selectedTables.length} selecionadas)`}
+                    Selecionar tabela principal
                   </label>
                   <div className="mb-4">
                     <SearchBar
-                      placeholder="Pesquisar tabelas…"
+                      placeholder="Pesquisar tabelas..."
                       value={searchQuery}
                       onChange={setSearchQuery}
                     />
                   </div>
-                  <div className="grid grid-cols-3 gap-5 max-h-[400px] overflow-y-auto mb-3.5">
-                    {filteredTables.length > 0 ? (
-                      filteredTables.map((table, index) => (
+                  <div className="grid grid-cols-5 gap-4 max-h-[400px] overflow-y-auto">
+                    {isLoadingTables && tables.length === 0 ? (
+                      <div className="col-span-3 text-center py-10 text-[13px] text-[#8fa899] dark:text-[#9ca3af]">
+                        A carregar tabelas a partir da API...
+                      </div>
+                    ) : tablesError ? (
+                      <div className="col-span-3 rounded-[10px] border-[1.5px] border-red-200 bg-red-50 dark:bg-red-900/10 dark:border-red-900/40 px-4 py-5 text-center">
+                        <div className="text-[13px] font-semibold text-red-700 dark:text-red-400 mb-2">
+                          Não foi possível carregar as tabelas
+                        </div>
+                        <div className="text-[12px] text-red-600 dark:text-red-300 mb-4">{tablesError}</div>
+                        <button
+                          onClick={() => void loadTables()}
+                          className="px-4 py-2 rounded-full text-[12px] font-semibold bg-red-600 text-white hover:bg-red-700 transition-colors"
+                        >
+                          Tentar novamente
+                        </button>
+                      </div>
+                    ) : filteredTables.length > 0 ? (
+                      filteredTables.map((table) => (
                         <TableCard
                           key={table.key}
                           table={table}
-                          isSelected={selectedTables.includes(table.key)}
-                          onClick={() => setSelectedTables(prev => prev.includes(table.key) ? prev.filter(t => t !== table.key) : [...prev, table.key])}
-                          variant="default"
-                          style={{ animationDelay: `${index * 0.05}s` }}
+                          isSelected={baseTableKey === table.key}
+                          onClick={() => setBaseTableKey((prev) => prev === table.key ? '' : table.key)}
                         />
                       ))
                     ) : (
                       <div className="col-span-3 text-center py-5 text-[13px] text-[#8fa899] dark:text-[#9ca3af]">
-                        Nenhuma tabela encontrada para "<b>{searchQuery}</b>"
+                        {searchQuery
+                          ? <>Nenhuma tabela encontrada para "<b>{searchQuery}</b>"</>
+                          : 'Nenhuma tabela disponível na API.'}
                       </div>
                     )}
                   </div>
                 </div>
 
-                {selectedTables.length > 0 && (
-                  <div className="border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-[10px] p-4 bg-[#f9fafb] dark:bg-[#2a2a2a]">
-                    <div className="text-[12px] font-bold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-3">
-                      Preview — primeiras linhas
+                <div>
+                  <label className="block text-[12px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-2">
+                    Selecionar tabelas relacionadas
+                  </label>
+                  {baseTableKey ? (
+                    relatedTableOptions.length > 0 ? (
+                      <div className="grid grid-cols-5 gap-4 max-h-[320px] overflow-y-auto">
+                        {relatedTableOptions.map((table) => (
+                          <TableCard
+                            key={table.key}
+                            table={table}
+                            subtitle={`${table.relation.direction === 'incoming' ? 'Relacionada por' : 'Ligada por'} ${table.relation.from_column}`}
+                            isSelected={selectedRelatedTables.includes(table.key)}
+                            onClick={() => toggleRelatedTable(table.key)}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center py-12 text-[13px] text-[#8fa899] dark:text-[#9ca3af]">
+                        Esta tabela não tem relações diretas disponíveis.
+                      </div>
+                    )
+                  ) : (
+                    <div className="text-center py-12 text-[13px] text-[#8fa899] dark:text-[#9ca3af]">
+                      Selecione primeiro a tabela principal.
                     </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full border-collapse text-[12px]">
-                        <thead>
-                          <tr>
-                            {TABLES.find(t => t.key === selectedTables[0])
-                              ?.columns.slice(0, 6)
-                              .map(col => (
-                                <th
-                                  key={col.n}
-                                  className="px-3 py-2 bg-[#f9fafb] dark:bg-[#2a2a2a] text-[#8fa899] dark:text-[#9ca3af] text-[10px] uppercase tracking-wider font-semibold text-left border-b border-[#e8ecf0] dark:border-[#3a3a3a]"
-                                >
-                                  {col.label}
-                                </th>
-                              ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {[0, 1, 2].map(rowIndex => (
-                            <tr key={rowIndex}>
-                              {TABLES.find(t => t.key === selectedTables[0])
-                                ?.columns.slice(0, 6)
-                                .map((col, colIndex) => (
-                                  <td
-                                    key={col.n}
-                                    className="px-3 py-2 border-b border-[#e8ecf0]/50 dark:border-[#3a3a3a]/50 text-[#1a2e1a] dark:text-[#9ca3af]"
-                                  >
-                                    {colIndex === 0 ? rowIndex + 1 : '—'}
-                                  </td>
-                                ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             )}
 
-            {/* Step 2: Columns */}
             {currentStep === 2 && (
               <div>
                 <label className="block text-[12px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-3">
                   Selecionar colunas para incluir no relatório
                 </label>
                 {availableColumns.length > 0 ? (
-                  <div className="grid grid-cols-2 gap-3">
-                    {availableColumns.map(({ table, column, key }) => (
-                      <div
-                        key={key}
-                        onClick={() => toggleColumn(key)}
-                        className={`p-4 rounded-lg border-[1.5px] cursor-pointer transition-all ${
-                          selectedColumns.includes(key)
-                            ? 'bg-[#d8f3dc] dark:bg-[#1b4332] border-[#40916c]'
-                            : 'bg-white dark:bg-[#2a2a2a] border-[#e8ecf0] dark:border-[#3a3a3a] hover:border-[#40916c]/50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div
-                            className={`w-5 h-5 rounded border-[1.5px] flex items-center justify-center transition-all ${
-                              selectedColumns.includes(key)
-                                ? 'bg-[#40916c] border-[#40916c]'
-                                : 'bg-white dark:bg-[#2a2a2a] border-[#d1e8d4] dark:border-[#3a3a3a]'
-                            }`}
-                          >
-                            {selectedColumns.includes(key) && <Check className="w-3 h-3 text-white" />}
-                          </div>
-                          <div className="flex-1">
-                            <div className="text-[13px] font-semibold text-[#1a2e1a] dark:text-white">{column}</div>
-                            <div className="text-[11px] text-[#8fa899] dark:text-[#6b7280]">{table}</div>
-                          </div>
-                        </div>
-                      </div>
+                  <div className="grid grid-cols-5 gap-4 max-h-[400px] overflow-y-auto">
+                    {availableColumns.map((column) => (
+                      <TableCard
+                        key={column.key}
+                        table={{ key: column.key, name: column.columnLabel }}
+                        subtitle={column.tableName}
+                        isSelected={selectedColumns.includes(column.key)}
+                        onClick={() => toggleColumn(column.key)}
+                      />
                     ))}
                   </div>
                 ) : (
                   <div className="text-center py-16 text-[#8fa899] dark:text-[#9ca3af]">
-                    <div className="text-[13px]">Selecione pelo menos uma tabela no passo anterior</div>
+                    <div className="text-[13px]">Selecione a tabela principal e as tabelas relacionadas no passo anterior</div>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Step 3: Filters */}
             {currentStep === 3 && (
               <div>
                 <label className="block text-[12px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-3">
@@ -338,8 +552,10 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                               className="w-full px-3 py-2 bg-[#f9fafb] dark:bg-[#2a2a2a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg text-[13px] text-[#1a2e1a] dark:text-[#9ca3af] outline-none transition-colors focus:border-[#40916c]"
                             >
                               <option value="">-- Selecionar coluna --</option>
-                              {availableColumns.map(({ column, key }) => (
-                                <option key={key} value={key}>{column}</option>
+                              {availableColumns.map((column) => (
+                                <option key={column.key} value={column.key}>
+                                  {column.tableName} — {column.columnLabel}
+                                </option>
                               ))}
                             </select>
                           </div>
@@ -396,10 +612,8 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
               </div>
             )}
 
-            {/* Step 4: Grouping */}
             {currentStep === 4 && (
               <div className="grid grid-cols-2 gap-6">
-                {/* Left Column */}
                 <div className="space-y-6">
                   <div>
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-2">
@@ -411,8 +625,10 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                       className="w-full px-4 py-3 bg-white dark:bg-[#2a2a2a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg text-[14px] text-[#1a2e1a] dark:text-[#9ca3af] outline-none transition-colors focus:border-[#40916c]"
                     >
                       <option value="">-- Selecionar coluna --</option>
-                      {availableColumns.map(({ column, key }) => (
-                        <option key={key} value={key}>{column}</option>
+                      {availableColumns.map((column) => (
+                        <option key={column.key} value={column.key}>
+                          {column.tableName} — {column.columnLabel}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -422,7 +638,7 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                       Funções agregadas
                     </label>
                     <div className="flex gap-2 flex-wrap">
-                      {['SOMA', 'MÉDIA', 'CONTAGEM', 'MIN', 'MAX'].map(func => (
+                      {['SOMA', 'MÉDIA', 'CONTAGEM', 'MIN', 'MAX'].map((func) => (
                         <button
                           key={func}
                           onClick={() => toggleAggregateFunction(func)}
@@ -439,7 +655,6 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                   </div>
                 </div>
 
-                {/* Right Column */}
                 <div className="space-y-6">
                   <div>
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-3">
@@ -456,7 +671,7 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                             className="sr-only peer"
                           />
                           <div className="w-11 h-6 bg-[#d1e8d4] dark:bg-[#3a3a3a] rounded-full peer peer-checked:bg-[#40916c] peer-focus:ring-2 peer-focus:ring-[#40916c]/20 transition-all">
-                            <div className="w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform peer-checked:translate-x-5 translate-x-0.5 translate-y-0.5"></div>
+                            <div className="w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform peer-checked:translate-x-5 translate-x-0.5 translate-y-0.5" />
                           </div>
                         </label>
                       </div>
@@ -470,7 +685,7 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                             className="sr-only peer"
                           />
                           <div className="w-11 h-6 bg-[#d1e8d4] dark:bg-[#3a3a3a] rounded-full peer peer-checked:bg-[#40916c] peer-focus:ring-2 peer-focus:ring-[#40916c]/20 transition-all">
-                            <div className="w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform peer-checked:translate-x-5 translate-x-0.5 translate-y-0.5"></div>
+                            <div className="w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform peer-checked:translate-x-5 translate-x-0.5 translate-y-0.5" />
                           </div>
                         </label>
                       </div>
@@ -487,8 +702,10 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                       className="w-full px-4 py-3 bg-white dark:bg-[#2a2a2a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg text-[14px] text-[#1a2e1a] dark:text-[#9ca3af] outline-none transition-colors focus:border-[#40916c]"
                     >
                       <option value="">-- Sem ordem --</option>
-                      {availableColumns.map(({ column, key }) => (
-                        <option key={key} value={key}>{column}</option>
+                      {availableColumns.map((column) => (
+                        <option key={column.key} value={column.key}>
+                          {column.tableName} — {column.columnLabel}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -496,221 +713,149 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
               </div>
             )}
 
-            {/* Step 5: Preview */}
             {currentStep === 5 && (
               <div>
                 <label className="block text-[12px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-3">
                   Preview do relatório
                 </label>
-                <div className="bg-white border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg p-4">
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse text-[13px]">
-                      <thead>
-                        <tr>
-                          {selectedColumns.length > 0 ? (
-                            selectedColumns.slice(0, 6).map(colKey => {
-                              const col = availableColumns.find(c => c.key === colKey);
-                              return (
-                                <th
-                                  key={colKey}
-                                  className="px-4 py-3 bg-[#f9fafb] dark:bg-[#2a2a2a] text-[#8fa899] dark:text-[#9ca3af] text-[11px] uppercase tracking-wider font-semibold text-left border-b-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a]"
-                                >
-                                  {col?.column || 'Coluna'}
-                                </th>
-                              );
-                            })
-                          ) : (
-                            <th className="px-4 py-3 bg-[#f9fafb] dark:bg-[#2a2a2a] text-[#8fa899] dark:text-[#9ca3af] text-[11px] uppercase tracking-wider font-semibold text-left border-b-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a]">
-                              Nenhuma coluna selecionada
-                            </th>
-                          )}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[0, 1, 2, 3, 4].map(rowIndex => (
-                          <tr key={rowIndex} className="hover:bg-[#f9fafb] transition-colors">
-                            {selectedColumns.length > 0 ? (
-                              selectedColumns.slice(0, 6).map((colKey, colIndex) => (
-                                <td
-                                  key={colKey}
-                                  className="px-4 py-3 border-b border-[#e8ecf0]/50 dark:border-[#3a3a3a]/50 text-[#1a2e1a] dark:text-[#9ca3af]"
-                                >
-                                  {colIndex === 0 ? `Linha ${rowIndex + 1}` : '—'}
-                                </td>
-                              ))
-                            ) : (
-                              <td className="px-4 py-3 border-b border-[#e8ecf0]/50 dark:border-[#3a3a3a]/50 text-[#8fa899] dark:text-[#9ca3af] text-center">
-                                Dados de exemplo
-                              </td>
-                            )}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                <div className="mt-4 p-4 bg-blue-50 border-[1.5px] border-blue-200 rounded-lg">
-                  <div className="text-[13px] text-blue-900">
-                    <strong>ℹ️ Informação:</strong> Esta é uma pré-visualização dos dados. Os valores reais serão carregados após gerar o relatório.
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Step 6: Actions */}
-            {currentStep === 6 && (
-              <div>
-                <label className="block text-[12px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-4">
-                  Selecionar ações para o relatório
-                </label>
-                <div className="grid grid-cols-2 gap-4">
-                  {[
-                    { id: 'save', label: 'Guardar na aplicação', icon: Save, color: 'bg-[#2d6a4f]' },
-                    { id: 'csv', label: 'Exportar para CSV', icon: Download, color: 'bg-[#1e88e5]' },
-                    { id: 'pdf', label: 'Exportar para PDF', icon: FileText, color: 'bg-[#e63946]' },
-                    { id: 'json', label: 'Exportar para JSON', icon: FileJson, color: 'bg-[#f77f00]' },
-                  ].map(({ id, label, icon: Icon, color }) => (
-                    <div
-                      key={id}
-                      onClick={() => toggleAction(id)}
-                      className={`p-6 rounded-xl border-[1.5px] cursor-pointer transition-all ${
-                        selectedActions.includes(id)
-                          ? 'bg-[#d8f3dc] dark:bg-[#1b4332] border-[#40916c] shadow-md'
-                          : 'bg-white dark:bg-[#2a2a2a] border-[#e8ecf0] dark:border-[#3a3a3a] hover:border-[#40916c]/50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 ${color} rounded-full flex items-center justify-center`}>
-                          <Icon className="w-6 h-6 text-white" />
-                        </div>
-                        <div className="flex-1">
-                          <div className="text-[14px] font-semibold text-[#1a2e1a] dark:text-[#9ca3af]">{label}</div>
-                        </div>
-                        <div
-                          className={`w-6 h-6 rounded border-[1.5px] flex items-center justify-center transition-all ${
-                            selectedActions.includes(id)
-                              ? 'bg-[#40916c] border-[#40916c]'
-                              : 'bg-white border-[#d1e8d4] dark:border-[#3a3a3a]'
-                          }`}
-                        >
-                          {selectedActions.includes(id) && <Check className="w-4 h-4 text-white" />}
-                        </div>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-white dark:bg-[#2a2a2a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg p-4">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wide text-[#8fa899] dark:text-[#9ca3af] mb-2">
+                        Nome do relatório
+                      </label>
+                      <input
+                        type="text"
+                        value={reportName}
+                        onChange={(e) => setReportName(e.target.value)}
+                        placeholder="Ex: Relatório de Utentes Ativos"
+                        className="w-full px-4 py-3 bg-[#f9fafb] dark:bg-[#1a1a1a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg text-[14px] text-[#1a2e1a] dark:text-[#9ca3af] outline-none transition-colors focus:border-[#40916c]"
+                      />
+                    </div>
+                    <div className="bg-white dark:bg-[#2a2a2a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg p-4">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[#8fa899] dark:text-[#9ca3af] mb-2">
+                        Tabelas incluídas
+                      </div>
+                      <div className="text-[14px] font-semibold text-[#1a2e1a] dark:text-white">
+                        {includedTables.length > 0
+                          ? includedTables.map((table) => table.name).join(', ')
+                          : 'Nenhuma tabela selecionada'}
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Step 7: Settings */}
-            {currentStep === 7 && (
-              <div className="grid grid-cols-2 gap-6">
-                {/* Left Column */}
-                <div className="space-y-5">
-                  <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-2">
-                      Agendamento automático
-                    </label>
-                    <div className="flex gap-2">
-                      {['never', 'daily', 'weekly', 'monthly'].map(option => (
-                        <button
-                          key={option}
-                          onClick={() => setSchedule(option)}
-                          className={`flex-1 px-3 py-2.5 rounded-lg text-[12px] font-semibold transition-all ${
-                            schedule === option
-                              ? 'bg-[#2d6a4f] text-white'
-                              : 'bg-[#f0f0f0] text-[#6b7280] hover:bg-[#e0e0e0]'
-                          }`}
-                        >
-                          {option === 'never' && 'Nunca'}
-                          {option === 'daily' && 'Diário'}
-                          {option === 'weekly' && 'Semanal'}
-                          {option === 'monthly' && 'Mensal'}
-                        </button>
-                      ))}
-                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-2">
-                      Enviar por e-mail para
+                  <div className="bg-white dark:bg-[#2a2a2a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg p-4">
+                    <label className="block text-[11px] font-semibold uppercase tracking-wide text-[#8fa899] dark:text-[#9ca3af] mb-2">
+                      Descrição do relatório
                     </label>
                     <input
-                      type="email"
-                      value={emailTo}
-                      onChange={(e) => setEmailTo(e.target.value)}
-                      placeholder="email@empresa.pt"
-                      className="w-full px-4 py-3 bg-white border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg text-[14px] text-[#1a2e1a] dark:text-[#9ca3af] outline-none transition-colors focus:border-[#40916c] placeholder:text-[#8fa899] dark:placeholder:text-[#9ca3af]"
+                      type="text"
+                      value={reportDescription}
+                      onChange={(e) => setReportDescription(e.target.value)}
+                      placeholder="Breve descrição do relatório"
+                      className="w-full px-4 py-3 bg-[#f9fafb] dark:bg-[#1a1a1a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg text-[14px] text-[#1a2e1a] dark:text-[#9ca3af] outline-none transition-colors focus:border-[#40916c]"
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-2">
-                      Formato padrão
-                    </label>
-                    <select
-                      value={defaultFormat}
-                      onChange={(e) => setDefaultFormat(e.target.value)}
-                      className="w-full px-4 py-3 bg-white border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg text-[14px] text-[#1a2e1a] dark:text-[#9ca3af] outline-none transition-colors focus:border-[#40916c]"
-                    >
-                      <option value="csv">CSV</option>
-                      <option value="pdf">PDF</option>
-                      <option value="json">JSON</option>
-                      <option value="xlsx">Excel (XLSX)</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Right Column */}
-                <div className="space-y-5">
-                  <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-2">
-                      Cor dos gráficos
-                    </label>
-                    <div className="flex gap-2">
-                      {CHART_COLORS.map(color => (
-                        <button
-                          key={color}
-                          onClick={() => setChartColor(color)}
-                          className={`w-10 h-10 rounded-full transition-all ${
-                            chartColor === color ? 'ring-2 ring-[#1a2e1a] ring-offset-2' : ''
-                          }`}
-                          style={{ backgroundColor: color }}
-                        />
-                      ))}
+                  <div className="bg-white dark:bg-[#2a2a2a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg p-4">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-[#8fa899] dark:text-[#9ca3af] mb-2">
+                      Colunas selecionadas
                     </div>
+                    {selectedColumnLabels.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {selectedColumnLabels.map((column) => (
+                          <span
+                            key={column.key}
+                            className="px-3 py-1.5 rounded-full bg-[#f3f6f4] dark:bg-[#1a1a1a] text-[12px] font-medium text-[#1a2e1a] dark:text-[#9ca3af]"
+                          >
+                            {column.tableName} — {column.columnLabel}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[13px] text-[#8fa899] dark:text-[#9ca3af]">
+                        Nenhuma coluna selecionada.
+                      </div>
+                    )}
                   </div>
 
-                  <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-2">
-                      Fuso horário
-                    </label>
-                    <select
-                      value={timezone}
-                      onChange={(e) => setTimezone(e.target.value)}
-                      className="w-full px-4 py-3 bg-white border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg text-[14px] text-[#1a2e1a] dark:text-[#9ca3af] outline-none transition-colors focus:border-[#40916c]"
-                    >
-                      <option value="Europe/Lisbon (UTC+0/+1)">Europe/Lisbon (UTC+0/+1)</option>
-                      <option value="Europe/London (UTC+0)">Europe/London (UTC+0)</option>
-                      <option value="America/New_York (UTC-5)">America/New_York (UTC-5)</option>
-                      <option value="Asia/Tokyo (UTC+9)">Asia/Tokyo (UTC+9)</option>
-                    </select>
+                  <div className="bg-white dark:bg-[#2a2a2a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg p-4">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-[#8fa899] dark:text-[#9ca3af] mb-2">
+                      Filtros aplicados
+                    </div>
+                    {activeFilters.length > 0 ? (
+                      <div className="space-y-2">
+                        {activeFilters.map((filter, index) => {
+                          const column = availableColumnsByKey.get(filter.column);
+                          const filterLabel = column ? `${column.tableName} — ${column.columnLabel}` : filter.column;
+                          return (
+                            <div key={`${filter.column}-${index}`} className="text-[13px] text-[#1a2e1a] dark:text-[#9ca3af]">
+                              <strong>{filterLabel}</strong> {filter.operator} <span>{filter.value}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-[13px] text-[#8fa899] dark:text-[#9ca3af]">
+                        Sem filtros aplicados.
+                      </div>
+                    )}
                   </div>
 
-                  <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-2">
-                      Linhas por página
-                    </label>
-                    <select
-                      value={rowsPerPage}
-                      onChange={(e) => setRowsPerPage(e.target.value)}
-                      className="w-full px-4 py-3 bg-white border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg text-[14px] text-[#1a2e1a] dark:text-[#9ca3af] outline-none transition-colors focus:border-[#40916c]"
-                    >
-                      <option value="10">10</option>
-                      <option value="25">25</option>
-                      <option value="50">50</option>
-                      <option value="100">100</option>
-                    </select>
+                  <div className="bg-white dark:bg-[#2a2a2a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[#8fa899] dark:text-[#9ca3af]">
+                        Pré-visualização dos dados
+                      </div>
+                      <div className="text-[12px] text-[#8fa899] dark:text-[#9ca3af]">
+                        Máximo de 10 linhas
+                      </div>
+                    </div>
+
+                    {isLoadingPreview ? (
+                      <div className="text-[13px] text-[#8fa899] dark:text-[#9ca3af] py-6 text-center">
+                        A carregar pré-visualização...
+                      </div>
+                    ) : previewError ? (
+                      <div className="text-[13px] text-red-600 dark:text-red-400 py-4">
+                        {previewError}
+                      </div>
+                    ) : previewColumns.length > 0 && previewRows.length > 0 ? (
+                      <div className="overflow-x-auto">
+                        <table className="w-full border-collapse text-[13px]">
+                          <thead>
+                            <tr>
+                              {previewColumns.map((column) => (
+                                <th
+                                  key={column}
+                                  className="px-4 py-3 bg-[#f9fafb] dark:bg-[#1a1a1a] text-[#8fa899] dark:text-[#9ca3af] text-[11px] uppercase tracking-wider font-semibold text-left border-b-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a]"
+                                >
+                                  {column}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {previewRows.map((row, rowIndex) => (
+                              <tr key={rowIndex} className="hover:bg-[#f9fafb] dark:hover:bg-[#1f2937] transition-colors">
+                                {previewColumns.map((column) => (
+                                  <td
+                                    key={`${rowIndex}-${column}`}
+                                    className="px-4 py-3 border-b border-[#e8ecf0]/50 dark:border-[#3a3a3a]/50 text-[#1a2e1a] dark:text-[#9ca3af]"
+                                  >
+                                    {String(row[column] ?? '—')}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="text-[13px] text-[#8fa899] dark:text-[#9ca3af] py-4">
+                        Ainda não existem dados carregados para mostrar. O resumo da configuração do relatório está acima.
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -718,33 +863,56 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
           </div>
         </div>
 
-        {/* Footer */}
         <div className="border-t border-[#e8ecf0] dark:border-[#3a3a3a] flex-shrink-0 bg-[#f9fafb] dark:bg-[#2a2a2a]">
-          <div className="w-full px-7 py-3.5 flex items-center justify-end gap-2.5">
-            {currentStep > 1 && (
-              <button
-                onClick={handlePrev}
-                className="px-5 py-2.5 rounded-full text-[13px] font-semibold cursor-pointer border-[1.5px] bg-transparent border-[#e8ecf0] dark:border-[#3a3a3a] text-[#4a6358] dark:text-[#9ca3af] transition-all hover:border-[#4a6358] hover:text-[#1a2e1a]"
-              >
-                ← Anterior
-              </button>
+          <div className="w-full px-7 py-3.5">
+            {errorMessage && (
+              <div className="mb-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/40 p-3">
+                <div className="text-[13px] text-red-700 dark:text-red-400 font-medium flex items-start gap-2">
+                  <span className="flex-shrink-0 mt-0.5">⚠</span>
+                  <span>{errorMessage}</span>
+                </div>
+              </div>
             )}
-            <button
-              onClick={onClose}
-              className="px-5 py-2.5 rounded-full text-[13px] font-semibold cursor-pointer border-[1.5px] bg-transparent border-[#e8ecf0] dark:border-[#3a3a3a] text-[#4a6358] dark:text-[#9ca3af] transition-all hover:border-[#4a6358] hover:text-[#1a2e1a]"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={handleNext}
-              className={`px-5 py-2.5 rounded-full text-[13px] font-semibold cursor-pointer border-[1.5px] transition-all ${
-                currentStep === STEPS.length
-                  ? 'bg-[#40916c] text-white border-[#40916c] hover:bg-[#2d6a4f]'
-                  : 'bg-[#1b4332] text-white border-[#1b4332] hover:bg-[#2d6a4f]'
-              }`}
-            >
-              {currentStep === STEPS.length ? '✓ Gerar Relatório' : 'Próximo →'}
-            </button>
+            <div className="flex items-center justify-end gap-2.5">
+              {currentStep > 1 && (
+                <button
+                  onClick={handlePrev}
+                  disabled={isCreating}
+                  className="px-5 py-2.5 rounded-full text-[13px] font-semibold cursor-pointer border-[1.5px] bg-transparent border-[#e8ecf0] dark:border-[#3a3a3a] text-[#4a6358] dark:text-[#9ca3af] transition-all hover:border-[#4a6358] hover:text-[#1a2e1a] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Anterior
+                </button>
+              )}
+              <button
+                onClick={() => { wizardContext.closeWizard(); onClose(); }}
+                disabled={isCreating}
+                className="px-5 py-2.5 rounded-full text-[13px] font-semibold cursor-pointer border-[1.5px] bg-transparent border-[#e8ecf0] dark:border-[#3a3a3a] text-[#4a6358] dark:text-[#9ca3af] transition-all hover:border-[#4a6358] hover:text-[#1a2e1a] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleNext}
+                disabled={isCreating}
+                className={`px-5 py-2.5 rounded-full text-[13px] font-semibold cursor-pointer border-[1.5px] transition-all flex items-center gap-2 ${
+                  currentStep === STEPS.length
+                    ? 'bg-[#40916c] text-white border-[#40916c] hover:bg-[#2d6a4f] disabled:opacity-50 disabled:cursor-not-allowed'
+                    : 'bg-[#1b4332] text-white border-[#1b4332] hover:bg-[#2d6a4f] disabled:opacity-50 disabled:cursor-not-allowed'
+                }`}
+              >
+                {isCreating && (
+                  <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                )}
+                {currentStep === STEPS.length
+                  ? (isCreating ? 'A guardar...' : 'Gerar Relatório')
+                  : (
+                    <>
+                      Seguinte
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+              </button>
+            </div>
           </div>
         </div>
       </div>

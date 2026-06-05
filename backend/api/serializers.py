@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from .models import OTPChallenge
+from .models import SavedReport
 
 User = get_user_model()
 
@@ -61,3 +62,27 @@ class UserSerializer(serializers.ModelSerializer):
 
         picture = getattr(obj, "picture", None)
         return picture or None
+
+
+class SavedReportSerializer(serializers.ModelSerializer):
+    base_table = serializers.CharField(source="table", read_only=True)
+
+    class Meta:
+        model = SavedReport
+        fields = [
+            "id",
+            "owner",
+            "name",
+            "description",
+            "base_table",
+            "table",
+            "related_tables",
+            "columns",
+            "filters",
+            "created_at",
+            "file_json",
+            "file_csv",
+            "file_pdf",
+        ]
+        read_only_fields = ["id", "owner", "created_at", "file_json", "file_csv", "file_pdf"]
+

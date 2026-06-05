@@ -1,16 +1,29 @@
-import {useState} from 'react';
+import {useEffect, useState} from 'react';
 import {Plus, Search} from 'lucide-react';
 import ReportsTable from '../components/ReportsTable';
 import {useWizard} from '../context/WizardContext';
 import {useSearch} from '../context/SearchContext';
 
 export default function Relatorios() {
-    const {openWizard} = useWizard();
+    const {openWizard, setOnReportCreated} = useWizard();
     const {searchQuery: globalSearchQuery} = useSearch();
     const [searchQuery, setSearchQuery] = useState('');
+    const [refreshKey, setRefreshKey] = useState(0);
 
     // Use local search if it exists, otherwise use global search
     const activeSearchQuery = searchQuery || globalSearchQuery;
+
+    useEffect(() => {
+        // Register a callback to refresh reports when a new one is created
+        const refreshReports = () => {
+            setRefreshKey(k => k + 1);
+        };
+        setOnReportCreated(refreshReports);
+
+        return () => {
+            setOnReportCreated(null);
+        };
+    }, [setOnReportCreated]);
 
     return (
         <div className="flex-1 overflow-y-auto px-8 py-8 bg-[#fafafa] dark:bg-[#1a1a1a]">
@@ -47,7 +60,7 @@ export default function Relatorios() {
             </div>
 
             {/* Reports Table */}
-            <ReportsTable searchQuery={activeSearchQuery}/>
+            <ReportsTable key={refreshKey} searchQuery={activeSearchQuery}/>
         </div>
     );
 }

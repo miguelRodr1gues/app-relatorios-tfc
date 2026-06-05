@@ -1,6 +1,5 @@
 from django.urls import path
 from .views import (
-    EntityListAPIView,
     GoogleLoginView,
     LoginEmailView,
     LogoutView,
@@ -8,6 +7,14 @@ from .views import (
     RegisterView,
     UserMeView,
     VerifyCodeView,
+)
+from .report_views import (
+    EntityListAPIView,
+    ReportsListCreateAPIView,
+    ReportPreviewAPIView,
+    ReportDetailAPIView,
+    ReportDownloadView,
+    SchemaAPIView,
 )
 
 urlpatterns = [
@@ -26,4 +33,9 @@ urlpatterns = [
 
     # API
     path("entities/", EntityListAPIView.as_view(), name="entities"),
+    path("schema/", SchemaAPIView.as_view(), name="schema"),
+    path("reports/", ReportsListCreateAPIView.as_view(), name="reports-list-create"),
+    path("reports/preview/", ReportPreviewAPIView.as_view(), name="reports-preview"),
+    path("reports/<uuid:pk>/download/", ReportDownloadView.as_view(), name="reports-download"),
+    path("reports/<uuid:pk>/", ReportDetailAPIView.as_view(), name="reports-detail"),
 ]

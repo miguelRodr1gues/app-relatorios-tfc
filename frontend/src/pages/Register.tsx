@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 import { Mail, User } from "lucide-react";
 import { FcGoogle } from "react-icons/fc";
 import AuthShell from "../components/AuthShell";
@@ -28,7 +28,7 @@ export default function Register() {
 
     const googleAuthUrl =
       `https://accounts.google.com/o/oauth2/v2/auth` +
-      `?client_id=${encodeURIComponent(clientId)}` +
+      `client_id=${encodeURIComponent(clientId)}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&response_type=token%20id_token` +
       `&response_mode=fragment` +
@@ -78,8 +78,8 @@ export default function Register() {
         email: normalizedEmail,
       });
 
-      if (!challenge?.verificationToken) {
-        if (challenge?.error) {
+      if (!challenge.verificationToken) {
+        if (challenge.error) {
           setError(challenge.error);
           return;
         }
@@ -89,7 +89,7 @@ export default function Register() {
       }
 
       navigate(
-          `/verify-code?token=${encodeURIComponent(challenge.verificationToken)}&email=${encodeURIComponent(challenge.email)}&purpose=register&first_name=${encodeURIComponent(normalizedFirstName)}&last_name=${encodeURIComponent(normalizedLastName)}`,
+          `/verify-codetoken=${encodeURIComponent(challenge.verificationToken)}&email=${encodeURIComponent(challenge.email)}&purpose=register&first_name=${encodeURIComponent(normalizedFirstName)}&last_name=${encodeURIComponent(normalizedLastName)}`,
           { replace: true }
       );
     } catch {
@@ -105,7 +105,7 @@ export default function Register() {
       footer={
         <div className="text-center">
           <Link to="/login" className="text-[14px] text-[#2d6a4f] hover:underline font-semibold">
-            Já tem conta? Entrar
+            Já tem conta Entrar
           </Link>
         </div>
       }

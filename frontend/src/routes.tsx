@@ -1,38 +1,14 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
-import { ReactNode } from "react";
-import { useAuth } from "./context/AuthContext";
 
+import AuthGate from "./components/AuthGate";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Relatorios from "./pages/Relatorios";
 import Estrutura from "./pages/Estrutura";
-import Analises from "./pages/Analises";
 import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import VerifyCode from "./pages/VerifyCode";
-
-function AuthGate({
-                      children,
-                      requireAuth,
-                  }: {
-    children: ReactNode;
-    requireAuth: boolean;
-}) {
-    const { isAuthenticated, loading } = useAuth();
-
-    if (loading) return null;
-
-    if (requireAuth && !isAuthenticated) {
-        return <Navigate to="/login" replace />;
-    }
-
-    if (!requireAuth && isAuthenticated) {
-        return <Navigate to="/dashboard" replace />;
-    }
-
-    return <>{children}</>;
-}
 
 export const router = createBrowserRouter([
     {
@@ -77,7 +53,6 @@ export const router = createBrowserRouter([
             { path: "/dashboard", element: <Dashboard /> },
             { path: "/relatorios", element: <Relatorios /> },
             { path: "/estrutura", element: <Estrutura /> },
-            { path: "/analises", element: <Analises /> },
             { path: "/settings", element: <Settings /> },
         ],
     },

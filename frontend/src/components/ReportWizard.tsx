@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, ArrowLeft, ArrowRight } from 'lucide-react';
 import TableCard from './TableCard';
 import SearchBar from './SearchBar';
 import { createReport, fetchTableDefinitions, previewReport, type ApiTableDefinition } from '../lib/api';
-import { useWizard } from '../context/WizardContext';
+import { useWizard } from '../context/useWizard';
 
 interface WizardStep {
   id: string;
@@ -43,6 +44,27 @@ function buildColumnKey(tableKey: string, columnName: string) {
   return `${tableKey}::${columnName}`;
 }
 
+function ToggleSwitch({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <span className="relative inline-flex items-center">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="peer sr-only"
+      />
+      <span className="block w-11 h-6 rounded-full bg-[#d1e8d4] dark:bg-[#3a3a3a] peer-checked:bg-[#40916c] peer-focus:ring-2 peer-focus:ring-[#40916c]/20 transition-all" />
+      <span className="absolute left-0.5 top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5" />
+    </span>
+  );
+}
+
 export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
   const wizardContext = useWizard();
   const [currentStep, setCurrentStep] = useState(1);
@@ -63,12 +85,14 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
 
   const [reportName, setReportName] = useState('');
   const [reportDescription, setReportDescription] = useState('');
+  const [isReportPublic, setIsReportPublic] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [previewRows, setPreviewRows] = useState<Array<Record<string, unknown>>>([]);
   const [previewColumns, setPreviewColumns] = useState<string[]>([]);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewError, setPreviewError] = useState('');
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const loadTables = useCallback(async () => {
     setIsLoadingTables(true);
@@ -105,7 +129,7 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
   }, [baseTableKey]);
 
   const tableLookup = useMemo(
-    () => new Map(tables.map((table) => [table.key, table])),
+    () => new Map(tables.filter((table) => table?.key).map((table) => [table.key, table])),
     [tables]
   );
 
@@ -114,10 +138,14 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
 
     return tables.filter((table) => {
       if (!normalizedQuery) return true;
+      const tableName = table?.name ?? '';
+      const tableKey = table?.key ?? '';
+      const tableSchema = table?.schema ?? '';
+
       return (
-        table.name.toLowerCase().includes(normalizedQuery) ||
-        table.key.toLowerCase().includes(normalizedQuery) ||
-        table.schema?.toLowerCase().includes(normalizedQuery)
+        tableName.toLowerCase().includes(normalizedQuery) ||
+        tableKey.toLowerCase().includes(normalizedQuery) ||
+        tableSchema.toLowerCase().includes(normalizedQuery)
       );
     });
   }, [tables, searchQuery]);
@@ -126,7 +154,7 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
 
   const relatedTableOptions = useMemo(
     () =>
-      (baseTableDefinition?.related_tables || [])
+      (baseTableDefinition?.related_tables ?? [])
         .map((relation) => {
           const table = tableLookup.get(relation.key);
           if (!table) return null;
@@ -150,7 +178,7 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
   const availableColumns = useMemo<AvailableColumn[]>(
     () =>
       includedTables.flatMap((table) =>
-        table.columns.map((column) => ({
+        (table.columns ?? []).map((column) => ({
           tableKey: table.key,
           tableName: table.name,
           columnName: column.n,
@@ -194,6 +222,15 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
     [filters]
   );
 
+  const hasIncompleteFilters = useMemo(
+    () =>
+      filters.some((filter) => {
+        const hasAnyValue = Boolean(filter.column || filter.value);
+        return hasAnyValue && (!filter.column || !filter.value);
+      }),
+    [filters]
+  );
+
   const normalizedColumnSelections = useMemo(
     () =>
       selectedColumns
@@ -225,6 +262,121 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
         .filter((normalizedFilter): normalizedFilter is { table: string; column: string; operator: string; value: string } => Boolean(normalizedFilter)),
     [activeFilters, availableColumnsByKey]
   );
+
+  const maxAccessibleStep = useMemo(() => {
+    if (!baseTableKey) return 1;
+    if (normalizedColumnSelections.length === 0) return 2;
+    if (hasIncompleteFilters) return 3;
+    return STEPS.length;
+  }, [baseTableKey, hasIncompleteFilters, normalizedColumnSelections.length]);
+
+  const hasUnsavedChanges = useMemo(
+    () =>
+      Boolean(
+        baseTableKey ||
+          selectedRelatedTables.length > 0 ||
+          selectedColumns.length > 0 ||
+          filters.some((filter) => filter.column || filter.value || filter.operator !== EMPTY_FILTER.operator) ||
+          groupByColumn ||
+          aggregateFunctions.length > 0 ||
+          showSubtotals ||
+          !showGrandTotal ||
+          orderBy ||
+          reportName.trim() ||
+          reportDescription.trim() ||
+          isReportPublic
+      ),
+    [
+      aggregateFunctions.length,
+      baseTableKey,
+      filters,
+      groupByColumn,
+      isReportPublic,
+      orderBy,
+      reportDescription,
+      reportName,
+      selectedColumns.length,
+      selectedRelatedTables.length,
+      showGrandTotal,
+      showSubtotals,
+    ]
+  );
+
+  const getStepValidationMessage = useCallback(
+    (step: number) => {
+      if (step >= 1 && !baseTableKey) {
+        return 'Selecione uma tabela principal antes de continuar.';
+      }
+
+      if (step >= 2 && normalizedColumnSelections.length === 0) {
+        return 'Selecione pelo menos uma coluna antes de continuar.';
+      }
+
+      if (step >= 3 && hasIncompleteFilters) {
+        return 'Complete ou remova os filtros incompletos antes de continuar.';
+      }
+
+      return '';
+    },
+    [baseTableKey, hasIncompleteFilters, normalizedColumnSelections.length]
+  );
+
+  const resetWizard = useCallback(() => {
+    setCurrentStep(1);
+    setBaseTableKey('');
+    setSelectedRelatedTables([]);
+    setSelectedColumns([]);
+    setFilters([EMPTY_FILTER]);
+    setSearchQuery('');
+    setGroupByColumn('');
+    setAggregateFunctions([]);
+    setShowSubtotals(false);
+    setShowGrandTotal(true);
+    setOrderBy('');
+    setReportName('');
+    setReportDescription('');
+    setIsReportPublic(false);
+    setErrorMessage('');
+    setPreviewRows([]);
+    setPreviewColumns([]);
+    setPreviewError('');
+    setShowCancelConfirm(false);
+  }, []);
+
+  const closeWizard = useCallback(() => {
+    resetWizard();
+    wizardContext.closeWizard();
+    onClose();
+  }, [onClose, resetWizard, wizardContext]);
+
+  const requestCancel = useCallback(() => {
+    if (isCreating) return;
+
+    if (hasUnsavedChanges) {
+      setShowCancelConfirm(true);
+      return;
+    }
+
+    closeWizard();
+  }, [closeWizard, hasUnsavedChanges, isCreating]);
+
+  const handleStepClick = (stepNumber: number) => {
+    if (stepNumber === currentStep) return;
+
+    if (stepNumber <= maxAccessibleStep) {
+      setErrorMessage('');
+      setCurrentStep(stepNumber);
+      return;
+    }
+
+    setErrorMessage(getStepValidationMessage(stepNumber - 1));
+  };
+
+  useEffect(() => {
+    if (currentStep > maxAccessibleStep) {
+      setCurrentStep(maxAccessibleStep);
+    }
+  }, [currentStep, maxAccessibleStep]);
 
   useEffect(() => {
     if (currentStep !== 5) return;
@@ -312,6 +464,13 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
 
   const handleNext = async () => {
     if (currentStep < STEPS.length) {
+      const validationMessage = getStepValidationMessage(currentStep);
+      if (validationMessage) {
+        setErrorMessage(validationMessage);
+        return;
+      }
+
+      setErrorMessage('');
       setCurrentStep((prev) => prev + 1);
       return;
     }
@@ -319,17 +478,22 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
     setErrorMessage('');
 
     if (!reportName.trim()) {
-      setErrorMessage('Por favor indique um nome para o relatório');
+      setErrorMessage('Por favor indique um nome para o relat\u00f3rio.');
       return;
     }
 
     if (!baseTableKey) {
-      setErrorMessage('Selecione uma tabela principal');
+      setErrorMessage('Selecione uma tabela principal.');
       return;
     }
 
     if (normalizedColumnSelections.length === 0) {
-      setErrorMessage('Selecione pelo menos uma coluna para incluir no relatório');
+      setErrorMessage('Selecione pelo menos uma coluna para incluir no relat\u00f3rio.');
+      return;
+    }
+
+    if (hasIncompleteFilters) {
+      setErrorMessage('Complete ou remova os filtros incompletos antes de gerar o relat\u00f3rio.');
       return;
     }
 
@@ -342,12 +506,13 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
         related_tables: selectedRelatedTables,
         columns: normalizedColumnSelections,
         filters: normalizedPreviewFilters,
+        is_public: isReportPublic,
         generate_files: false,
       });
-      wizardContext.closeWizard();
-      onClose();
+      window.dispatchEvent(new Event('reports:changed'));
+      closeWizard();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Falha ao guardar o relatório');
+      setErrorMessage(error instanceof Error ? error.message : 'Falha ao guardar o relat\u00f3rio.');
     } finally {
       setIsCreating(false);
     }
@@ -356,9 +521,54 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
   if (!isOpen) return null;
 
   const progress = ((currentStep - 1) / (STEPS.length - 1)) * 100;
+  const cancelConfirmModal = showCancelConfirm && typeof document !== 'undefined'
+    ? createPortal(
+        <div className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/35 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-[460px] rounded-[28px] border border-[#e8ecf0] bg-white p-6 shadow-[0_24px_70px_rgba(15,23,42,0.22)] dark:border-[#3a3a3a] dark:bg-[#242424]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-[20px] font-bold leading-tight text-[#172132] dark:text-white">
+                  Cancelar criação do relatório?
+                </h3>
+                <p className="mt-3 text-[14px] leading-6 text-[#667085] dark:text-[#9ca3af]">
+                  Tens a certeza de que pretendes cancelar a criação do relatório? Todas as alterações não guardadas serão perdidas.
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Fechar"
+                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border-[1.5px] border-[#e8ecf0] bg-transparent text-[#4a6358] transition-all hover:bg-[#f4f6f8] dark:border-[#3a3a3a] dark:text-[#9ca3af] dark:hover:bg-[#1a1a1a]"
+                onClick={() => setShowCancelConfirm(false)}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="rounded-full border border-[#d1d5db] bg-white px-5 py-2.5 text-[13px] font-semibold text-[#374151] transition hover:bg-[#f3f4f6] dark:border-[#3a3a3a] dark:bg-[#2a2a2a] dark:text-[#d1d5db] dark:hover:bg-[#333]"
+                onClick={() => setShowCancelConfirm(false)}
+              >
+                Continuar a editar
+              </button>
+              <button
+                type="button"
+                className="rounded-full bg-[#dc2626] px-5 py-2.5 text-[13px] font-bold text-white transition hover:bg-[#b91c1c]"
+                onClick={closeWizard}
+              >
+                Cancelar relatório
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )
+    : null;
 
   return (
-    <div className="fixed inset-0 bg-black/35 backdrop-blur-sm z-[100] flex items-start justify-center overflow-y-auto">
+    <>
+      <div className="fixed inset-0 bg-black/35 backdrop-blur-sm z-[100] flex items-start justify-center overflow-y-auto">
       <div className="bg-[#fafafa] dark:bg-[#1a1a1a] w-full min-h-screen flex flex-col animate-[fadeUp_0.2s_ease]">
         <div className="bg-white dark:bg-[#2a2a2a] border-b-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] flex-shrink-0">
           <div className="w-full px-7">
@@ -370,7 +580,7 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                 </div>
               </div>
               <button
-                onClick={() => { wizardContext.closeWizard(); onClose(); }}
+                onClick={requestCancel}
                 className="w-8 h-8 rounded-full border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] bg-transparent text-[#4a6358] dark:text-[#9ca3af] flex items-center justify-center cursor-pointer transition-all hover:bg-[#f4f6f8] dark:hover:bg-[#1a1a1a]"
               >
                 <X className="w-4 h-4" />
@@ -384,9 +594,19 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                     const stepNum = index + 1;
                     const isActive = stepNum === currentStep;
                     const isDone = stepNum < currentStep;
+                    const canAccessStep = stepNum <= maxAccessibleStep;
 
                     return (
-                      <div key={step.id} className="flex flex-col items-center gap-0">
+                      <button
+                        key={step.id}
+                        type="button"
+                        disabled={!canAccessStep || isCreating}
+                        onClick={() => handleStepClick(stepNum)}
+                        className={`flex flex-col items-center gap-0 rounded-xl px-1 transition-all ${
+                          canAccessStep && !isCreating ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'
+                        }`}
+                        title={canAccessStep ? step.label : 'Complete os passos anteriores para continuar'}
+                      >
                         <div
                           className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold transition-all relative z-[3] ${
                             isActive
@@ -396,7 +616,7 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                                 : 'bg-[#d1e8d4] dark:bg-[#3a3a3a] text-[#52796f] dark:text-[#6b7280]'
                           }`}
                         >
-                          {isDone ? '✓' : stepNum}
+                          {stepNum}
                         </div>
                         <div
                           className={`text-[11.5px] font-semibold whitespace-nowrap mt-2 ${
@@ -409,11 +629,11 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                         >
                           {step.label}
                         </div>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
-                <div className="absolute top-[14px] left-0 right-0 h-[3px] bg-[#e8ecf0] dark:bg-[#3a3a3a] rounded-sm z-[1] -translate-y-1/2">
+                <div className="absolute top-[14px] left-[14px] right-[14px] h-[3px] bg-[#e8ecf0] dark:bg-[#3a3a3a] rounded-sm z-[1] -translate-y-1/2">
                   <div
                     className="absolute top-0 left-0 h-full bg-[#40916c] rounded-sm transition-all duration-400"
                     style={{ width: `${progress}%` }}
@@ -664,29 +884,13 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                       <div className="flex items-center justify-between">
                         <span className="text-[14px] text-[#1a2e1a] dark:text-[#9ca3af]">Subtotais por grupo</span>
                         <label className="relative inline-flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={showSubtotals}
-                            onChange={(e) => setShowSubtotals(e.target.checked)}
-                            className="sr-only peer"
-                          />
-                          <div className="w-11 h-6 bg-[#d1e8d4] dark:bg-[#3a3a3a] rounded-full peer peer-checked:bg-[#40916c] peer-focus:ring-2 peer-focus:ring-[#40916c]/20 transition-all">
-                            <div className="w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform peer-checked:translate-x-5 translate-x-0.5 translate-y-0.5" />
-                          </div>
+                          <ToggleSwitch checked={showSubtotals} onChange={setShowSubtotals} />
                         </label>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-[14px] text-[#1a2e1a] dark:text-[#9ca3af]">Total geral</span>
                         <label className="relative inline-flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={showGrandTotal}
-                            onChange={(e) => setShowGrandTotal(e.target.checked)}
-                            className="sr-only peer"
-                          />
-                          <div className="w-11 h-6 bg-[#d1e8d4] dark:bg-[#3a3a3a] rounded-full peer peer-checked:bg-[#40916c] peer-focus:ring-2 peer-focus:ring-[#40916c]/20 transition-all">
-                            <div className="w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform peer-checked:translate-x-5 translate-x-0.5 translate-y-0.5" />
-                          </div>
+                          <ToggleSwitch checked={showGrandTotal} onChange={setShowGrandTotal} />
                         </label>
                       </div>
                     </div>
@@ -715,9 +919,22 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
 
             {currentStep === 5 && (
               <div>
-                <label className="block text-[12px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af] mb-3">
-                  Preview do relatório
-                </label>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
+                  <label className="block text-[12px] font-semibold uppercase tracking-wider text-[#8fa899] dark:text-[#9ca3af]">
+                    Preview do relatório
+                  </label>
+                  <label className="inline-flex items-center gap-3 cursor-pointer rounded-full border border-[#e8ecf0] dark:border-[#3a3a3a] bg-white dark:bg-[#2a2a2a] px-3 py-2 shadow-sm self-start sm:self-auto">
+                    <span className="flex flex-col text-right leading-tight">
+                      <span className="text-[12px] font-bold text-[#1a2e1a] dark:text-white">
+                        {isReportPublic ? 'Público' : 'Privado'}
+                      </span>
+                      <span className="text-[11px] font-medium text-[#8fa899] dark:text-[#9ca3af]">
+                        {isReportPublic ? 'Visível para todos' : 'Só visível para ti'}
+                      </span>
+                    </span>
+                    <ToggleSwitch checked={isReportPublic} onChange={setIsReportPublic} />
+                  </label>
+                </div>
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-white dark:bg-[#2a2a2a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg p-4">
@@ -743,6 +960,7 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                       </div>
                     </div>
                   </div>
+
 
                   <div className="bg-white dark:bg-[#2a2a2a] border-[1.5px] border-[#e8ecf0] dark:border-[#3a3a3a] rounded-lg p-4">
                     <label className="block text-[11px] font-semibold uppercase tracking-wide text-[#8fa899] dark:text-[#9ca3af] mb-2">
@@ -863,12 +1081,11 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
           </div>
         </div>
 
-        <div className="border-t border-[#e8ecf0] dark:border-[#3a3a3a] flex-shrink-0 bg-[#f9fafb] dark:bg-[#2a2a2a]">
+        <div className="flex-shrink-0">
           <div className="w-full px-7 py-3.5">
             {errorMessage && (
               <div className="mb-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/40 p-3">
-                <div className="text-[13px] text-red-700 dark:text-red-400 font-medium flex items-start gap-2">
-                  <span className="flex-shrink-0 mt-0.5">⚠</span>
+                <div className="text-[13px] text-red-700 dark:text-red-400 font-medium">
                   <span>{errorMessage}</span>
                 </div>
               </div>
@@ -885,7 +1102,7 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
                 </button>
               )}
               <button
-                onClick={() => { wizardContext.closeWizard(); onClose(); }}
+                onClick={requestCancel}
                 disabled={isCreating}
                 className="px-5 py-2.5 rounded-full text-[13px] font-semibold cursor-pointer border-[1.5px] bg-transparent border-[#e8ecf0] dark:border-[#3a3a3a] text-[#4a6358] dark:text-[#9ca3af] transition-all hover:border-[#4a6358] hover:text-[#1a2e1a] disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -916,6 +1133,8 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+      {cancelConfirmModal}
+    </>
   );
 }

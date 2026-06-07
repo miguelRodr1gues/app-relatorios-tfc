@@ -79,10 +79,10 @@ class SavedReportSerializer(serializers.ModelSerializer):
             "related_tables",
             "columns",
             "filters",
+            "is_public",
+            "record_count",
             "created_at",
-            "file_json",
-            "file_csv",
-            "file_pdf",
         ]
-        read_only_fields = ["id", "owner", "created_at", "file_json", "file_csv", "file_pdf"]
+        read_only_fields = ["id", "owner", "created_at"]
+
 

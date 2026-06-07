@@ -1,8 +1,8 @@
 import {useEffect, useState} from 'react';
 import {Plus, Search} from 'lucide-react';
 import ReportsTable from '../components/ReportsTable';
-import {useWizard} from '../context/WizardContext';
-import {useSearch} from '../context/SearchContext';
+import {useWizard} from '../context/useWizard';
+import {useSearch} from '../context/useSearch';
 
 export default function Relatorios() {
     const {openWizard, setOnReportCreated} = useWizard();

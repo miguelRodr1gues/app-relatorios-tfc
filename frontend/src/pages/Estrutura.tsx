@@ -143,8 +143,8 @@ export default function Estrutura() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node<TableNodeData>[]>([] as any);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<TableNodeData>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -175,8 +175,8 @@ export default function Estrutura() {
 
   useEffect(() => {
     const { nodes: graphNodes, edges: graphEdges } = buildGraph(visibleTables);
-    setNodes(graphNodes as any);
-    setEdges(graphEdges as any);
+    setNodes(graphNodes);
+    setEdges(graphEdges);
   }, [visibleTables, setNodes, setEdges]);
 
   const nodeTypes = useMemo(
@@ -208,8 +208,8 @@ export default function Estrutura() {
         ) : (
           <ReactFlowProvider>
             <ReactFlow
-              nodes={nodes as any}
-              edges={edges as any}
+              nodes={nodes}
+              edges={edges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               nodeTypes={nodeTypes}

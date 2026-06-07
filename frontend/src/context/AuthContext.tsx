@@ -1,72 +1,71 @@
-import {
-  createContext,
-  useContext,
-  useMemo,
-  useState,
-  ReactNode,
-  useEffect,
-  useRef,
-} from "react";
-
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
+import {
+  AuthChallenge,
+  AuthContext,
+  AuthContextType,
+  RegisterCodePayload,
+  User,
+  VerifyCodePayload,
+} from "./AuthContextCore";
 
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-  avatar?: string;
+type UnknownRecord = Record<string, unknown>;
+
+type ApiErrorShape = {
+  response: {
+    data: string | {
+      error: string;
+      detail: string;
+    };
+  };
+  message: string;
+};
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null;
 }
 
-interface AuthContextType {
-  user: User | null;
-  isAuthenticated: boolean;
-  loading: boolean;
-  requestLoginCode: (email: string) => Promise<any>;
-  requestRegisterCode: (payload: any) => Promise<any>;
-  verifyCode: (payload: any) => Promise<boolean>;
-  loginWithGoogle: (token: string) => Promise<boolean>;
-  checkAuth: () => Promise<boolean>;
-  logout: () => Promise<void>;
+function asString(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+function mapUser(data: unknown): User {
+  const userData = isRecord(data) ? data : {};
+  const email = asString(userData.email);
+  const name = asString(userData.name, email.includes("@") ? email.split("@")[0] : "User");
 
-function mapUser(data: any): User {
   return {
-    id: String(data?.id ?? ""),
-    name: data?.name ?? data?.email?.split("@")[0] ?? "User",
-    email: data?.email ?? "",
-    avatar: data?.avatar ?? data?.picture,
+    id: String(userData.id ?? ""),
+    name,
+    email,
+    avatar: asString(userData.avatar, asString(userData.picture)) || undefined,
   };
 }
 
-function extractErrorMessage(error: any, fallback: string) {
-  const data = error?.response?.data;
+function extractErrorMessage(error: unknown, fallback: string) {
+  const apiError = error as ApiErrorShape;
+  const data = apiError.response.data;
 
   if (typeof data === "string" && data.trim()) {
     return data;
   }
 
-  if (data?.error) {
-    return data.error;
+  if (isRecord(data)) {
+    if (typeof data.error === "string" && data.error.trim()) return data.error;
+    if (typeof data.detail === "string" && data.detail.trim()) return data.detail;
   }
 
-  if (data?.detail) {
-    return data.detail;
-  }
-
-  return error?.message || fallback;
+  return apiError.message || fallback;
 }
 
-function normalizeChallenge(data: any) {
-  if (!data) return null;
+function normalizeChallenge(data: unknown): AuthChallenge | null {
+  if (!isRecord(data)) return null;
 
   return {
-    ...data,
-    verificationToken: data.verificationToken ?? data.verification_token,
-    purpose: data.purpose,
-    email: data.email,
-    expiresIn: data.expiresIn ?? data.expires_in,
+    verificationToken: asString(data.verificationToken, asString(data.verification_token)) || undefined,
+    purpose: asString(data.purpose) || undefined,
+    email: asString(data.email) || undefined,
+    expiresIn: typeof data.expiresIn === "number" ? data.expiresIn : typeof data.expires_in === "number" ? data.expires_in : undefined,
   };
 }
 
@@ -75,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const bootRef = useRef(false);
 
-  const checkAuth = async (): Promise<boolean> => {
+  const checkAuth = useCallback(async (): Promise<boolean> => {
     try {
       const { data } = await api.get("/api/auth/user/");
       setUser(mapUser(data));
@@ -84,28 +83,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       return false;
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (bootRef.current) return;
     bootRef.current = true;
 
-    (async () => {
+    void (async () => {
       await checkAuth();
       setLoading(false);
     })();
-  }, []);
+  }, [checkAuth]);
 
-  const requestLoginCode = async (email: string) => {
+  const requestLoginCode = useCallback(async (email: string) => {
     try {
       const { data } = await api.post("/api/auth/login/", { email });
       return normalizeChallenge(data);
-    } catch (error: any) {
-      return { error: extractErrorMessage(error, "Nao foi possivel enviar o código.") };
+    } catch (error: unknown) {
+      return { error: extractErrorMessage(error, "Nao foi possivel enviar o codigo.") };
     }
-  };
+  }, []);
 
-  const requestRegisterCode = async (payload: any) => {
+  const requestRegisterCode = useCallback(async (payload: RegisterCodePayload) => {
     try {
       const { data } = await api.post("/api/auth/register/", {
         first_name: payload.firstName,
@@ -114,12 +113,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       return normalizeChallenge(data);
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { error: extractErrorMessage(error, "Nao foi possivel criar a conta.") };
     }
-  };
+  }, []);
 
-  const verifyCode = async ({ verificationToken, code }: any) => {
+  const verifyCode = useCallback(async ({ verificationToken, code }: VerifyCodePayload) => {
     try {
       await api.post("/api/auth/verify-code/", {
         verification_token: verificationToken,
@@ -130,9 +129,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       return false;
     }
-  };
+  }, [checkAuth]);
 
-  const loginWithGoogle = async (token: string) => {
+  const loginWithGoogle = useCallback(async (token: string) => {
     try {
       await api.post("/api/auth/google/", { token });
       return await checkAuth();
@@ -140,42 +139,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       return false;
     }
-  };
+  }, [checkAuth]);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       await api.post("/api/auth/logout/");
     } finally {
       setUser(null);
     }
-  };
+  }, []);
 
-  const value = useMemo(
-      () => ({
-        user,
-        isAuthenticated: !!user,
-        loading,
-        requestLoginCode,
-        requestRegisterCode,
-        verifyCode,
-        loginWithGoogle,
-        checkAuth,
-        logout,
-      }),
-      [user, loading]
+  const value = useMemo<AuthContextType>(
+    () => ({
+      user,
+      isAuthenticated: Boolean(user),
+      loading,
+      requestLoginCode,
+      requestRegisterCode,
+      verifyCode,
+      loginWithGoogle,
+      checkAuth,
+      logout,
+    }),
+    [user, loading, requestLoginCode, requestRegisterCode, verifyCode, loginWithGoogle, checkAuth, logout]
   );
 
   if (loading) return null;
 
-  return (
-      <AuthContext.Provider value={value}>
-        {children}
-      </AuthContext.Provider>
-  );
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
-  return ctx;
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

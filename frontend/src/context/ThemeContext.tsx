@@ -1,20 +1,10 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-
-type Theme = "light" | "dark";
-
-type ThemeContextValue = {
-  theme: Theme;
-  isDarkMode: boolean;
-  setTheme: (t: Theme) => void;
-  toggleTheme: () => void;
-};
-
-const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
+import React, { useEffect, useMemo, useState } from "react";
+import { Theme, ThemeContext, ThemeContextValue } from "./ThemeContextCore";
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem("theme");
-    return saved === "dark" || saved === "light" ? (saved as Theme) : "light";
+    return saved === "dark" || saved === "light" ? saved : "light";
   });
 
   useEffect(() => {
@@ -35,10 +25,4 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
-}
-
-export function useTheme() {
-  const ctx = useContext(ThemeContext);
-  if (!ctx) throw new Error("useTheme must be used within ThemeProvider");
-  return ctx;
 }

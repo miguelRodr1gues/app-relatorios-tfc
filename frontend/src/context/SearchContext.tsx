@@ -1,11 +1,5 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
-
-type SearchContextValue = {
-  searchQuery: string;
-  setSearchQuery: (q: string) => void;
-};
-
-const SearchContext = createContext<SearchContextValue | undefined>(undefined);
+import React, { useMemo, useState } from "react";
+import { SearchContext, SearchContextValue } from "./SearchContextCore";
 
 export function SearchProvider({ children }: { children: React.ReactNode }) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -16,10 +10,4 @@ export function SearchProvider({ children }: { children: React.ReactNode }) {
   );
 
   return <SearchContext.Provider value={value}>{children}</SearchContext.Provider>;
-}
-
-export function useSearch() {
-  const ctx = useContext(SearchContext);
-  if (!ctx) throw new Error("useSearch must be used within SearchProvider");
-  return ctx;
 }

@@ -1,84 +1,67 @@
 #!/usr/bin/env python
 """
-Script para testar o download real via API
+Manual smoke test for report downloads.
+
+Exports are generated in memory by the API and returned directly in the HTTP
+response. No file paths are stored in SavedReport.
 """
 import os
 import sys
-import django
-from django.test import Client
-from django.contrib.auth import get_user_model
 
-# Setup Django
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+import django
+from django.contrib.auth import get_user_model
+from django.test import Client
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
 django.setup()
 
 from api.models import SavedReport
-from django.conf import settings
+
 
 User = get_user_model()
 
-print("[TEST] Testando download via API...")
-print("="*80)
 
-# Obter utilizador
-user = User.objects.first()
-if not user:
-    print("[ERROR] Nenhum utilizador encontrado")
-    sys.exit(1)
+def main():
+    print("[TEST] Testing in-memory report downloads...")
+    print("=" * 80)
 
-print(f"[TEST] Utilizador: {user.email}")
-
-# Obter relatório criado
-try:
-    report = SavedReport.objects.filter(owner=user, name="Test Report CSV PDF").first()
-    if not report:
-        print("[ERROR] Relatório de teste não encontrado")
+    user = User.objects.first()
+    if not user:
+        print("[ERROR] No user found")
         sys.exit(1)
 
-    print(f"[TEST] Relatório: {report.id}")
-    print(f"[TEST] CSV path na BD: {report.file_csv}")
-    print(f"[TEST] PDF path na BD: {report.file_pdf}")
-except Exception as e:
-    print(f"[ERROR] Erro ao buscar relatório: {e}")
-    sys.exit(1)
+    report = SavedReport.objects.filter(owner=user).first()
+    if not report:
+        print("[ERROR] No report found")
+        sys.exit(1)
 
-# Criar cliente HTTP
-client = Client()
+    print(f"[TEST] User: {getattr(user, 'email', user.pk)}")
+    print(f"[TEST] Report: {report.id} - {report.name}")
 
-# Testar downloads
-for fmt in ["csv", "pdf", "json"]:
-    print(f"\n[TEST] Testando download {fmt.upper()}...")
+    client = Client()
+    client.force_login(user)
 
-    try:
-        # Simular autenticação (usar cookies se disponível)
+    for export_format in ["csv", "pdf", "json"]:
+        print(f"\n[TEST] Download {export_format.upper()}...")
         response = client.get(
-            f'/api/reports/{report.id}/download/',
-            {'format': fmt},
-            HTTP_ACCEPT='application/json'
+            f"/api/reports/{report.id}/download/",
+            {"export_format": export_format},
         )
 
         print(f"[TEST] Status: {response.status_code}")
+        if response.status_code != 200:
+            print(f"[ERROR] Response: {response.content!r}")
+            continue
 
-        if response.status_code == 200:
-            content_length = len(response.content)
-            content_type = response.get('Content-Type', 'unknown')
-            print(f"[TEST] ✅ Download bem-sucedido!")
-            print(f"[TEST] Content-Type: {content_type}")
-            print(f"[TEST] Tamanho: {content_length} bytes")
-        elif response.status_code == 404:
-            print(f"[ERROR] ❌ 404 Not Found")
-            print(f"[ERROR] A resposta foi: {response.content}")
-        elif response.status_code == 401:
-            print(f"[ERROR] ❌ 401 Unauthorized - Não autenticado")
-        else:
-            print(f"[ERROR] ❌ Status {response.status_code}")
-            print(f"[ERROR] Resposta: {response.content}")
+        content = b"".join(response.streaming_content) if getattr(response, "streaming", False) else response.content
+        print("[TEST] OK")
+        print(f"[TEST] Content-Type: {response.get('Content-Type', 'unknown')}")
+        print(f"[TEST] Content-Disposition: {response.get('Content-Disposition', 'missing')}")
+        print(f"[TEST] Size: {len(content)} bytes")
 
-    except Exception as e:
-        print(f"[ERROR] Erro ao fazer download: {e}")
-        import traceback
-        traceback.print_exc()
+    print("\n" + "=" * 80)
+    print("[TEST] Done")
 
-print("\n" + "="*80)
-print("[TEST] Teste de download concluído!")
 
+if __name__ == "__main__":
+    main()

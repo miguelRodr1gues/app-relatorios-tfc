@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/useAuth';
 import { Mail } from 'lucide-react';
 import { FcGoogle } from 'react-icons/fc';
 import AuthShell from '../components/AuthShell';
@@ -26,7 +26,7 @@ export default function Login() {
 
     const googleAuthUrl =
       `https://accounts.google.com/o/oauth2/v2/auth` +
-      `?client_id=${encodeURIComponent(clientId)}` +
+      `client_id=${encodeURIComponent(clientId)}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&response_type=token%20id_token` +
       `&response_mode=fragment` +
@@ -65,13 +65,13 @@ export default function Login() {
     const challenge = await requestLoginCode(normalizedEmail);
     setLoading(false);
 
-    if (challenge?.verificationToken) {
+    if (challenge.verificationToken) {
       navigate(
-        `/verify-code?token=${encodeURIComponent(challenge.verificationToken)}&email=${encodeURIComponent(challenge.email)}&purpose=login`,
+        `/verify-codetoken=${encodeURIComponent(challenge.verificationToken)}&email=${encodeURIComponent(challenge.email)}&purpose=login`,
         { replace: true }
       );
     } else {
-      if (challenge?.error) {
+      if (challenge.error) {
         setError(challenge.error);
         return;
       }
@@ -86,7 +86,7 @@ export default function Login() {
       footer={
         <div className="text-center">
           <Link to="/register" className="text-[14px] text-[#2d6a4f] hover:underline font-semibold">
-            Ainda não tem conta? Registe-se
+            Ainda não tem conta Registe-se
           </Link>
         </div>
       }

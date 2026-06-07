@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
-import BarChart from '../components/BarChart';
 import ReportsTable from '../components/ReportsTable';
 import TableCard from '../components/TableCard';
-import { useWizard } from '../context/WizardContext';
-import { useSearch } from '../context/SearchContext';
+import { useWizard } from '../context/useWizard';
+import { useSearch } from '../context/useSearch';
+import { useAuth } from '../context/useAuth';
 import { fetchTableDefinitions, getReports, type ApiTableDefinition } from '../lib/api';
 
 const DASHBOARD_METRICS_KEY = 'dashboard-metrics';
@@ -19,8 +19,58 @@ type MetricOption = {
   subtitle: string;
 };
 
+type DashboardMetricsData = {
+  tables: ApiTableDefinition[];
+  reportsCount: number;
+};
+
+const dashboardMetricsCache = new Map<string, DashboardMetricsData>();
+const dashboardMetricsRequests = new Map<string, Promise<DashboardMetricsData>>();
+
 function formatNumber(value: number) {
   return new Intl.NumberFormat('pt-PT').format(value);
+}
+
+function getDashboardMetricsKey(userId: string, email: string) {
+  const ownerKey = userId || email || 'anonymous';
+  return `${DASHBOARD_METRICS_KEY}:${ownerKey}`;
+}
+
+function parseStoredMetricKeys(stored: string | null): MetricKey[] {
+  if (!stored) return [];
+
+  const parsed = JSON.parse(stored);
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .filter((item): item is MetricKey => typeof item === 'string')
+    .slice(0, MAX_METRIC_CARDS);
+}
+
+async function loadDashboardMetrics(cacheKey: string) {
+  const cached = dashboardMetricsCache.get(cacheKey);
+  if (cached) return cached;
+
+  const pendingRequest = dashboardMetricsRequests.get(cacheKey);
+  if (pendingRequest) return pendingRequest;
+
+  const request = Promise.all([
+    fetchTableDefinitions({ schema: 'public' }),
+    getReports(),
+  ]).then(([tableData, reports]) => {
+    const data = {
+      tables: tableData,
+      reportsCount: reports.length,
+    };
+
+    dashboardMetricsCache.set(cacheKey, data);
+    return data;
+  }).finally(() => {
+    dashboardMetricsRequests.delete(cacheKey);
+  });
+
+  dashboardMetricsRequests.set(cacheKey, request);
+  return request;
 }
 
 function AddMetricCard({ onClick }: { onClick: () => void }) {
@@ -40,12 +90,10 @@ function AddMetricCard({ onClick }: { onClick: () => void }) {
 function DashboardMetricCard({
   label,
   value,
-  subtitle,
   onRemove,
 }: {
   label: string;
   value: string;
-  subtitle: string;
   onRemove: () => void;
 }) {
   return (
@@ -60,11 +108,8 @@ function DashboardMetricCard({
       <div className="text-[13px] font-medium uppercase tracking-wide text-[#6b7280] dark:text-[#9ca3af] pr-8">
         {label}
       </div>
-      <div className="text-[36px] font-bold mt-4 leading-none text-[#1f2937] dark:text-white">
+      <div className="text-[42px] font-extrabold mt-5 leading-none tracking-tight text-[#1f2937] dark:text-white">
         {value}
-      </div>
-      <div className="text-[13px] mt-3 text-[#6b7280] dark:text-[#9ca3af]">
-        {subtitle}
       </div>
     </div>
   );
@@ -73,42 +118,59 @@ function DashboardMetricCard({
 export default function Dashboard() {
   const { openWizard } = useWizard();
   const { searchQuery } = useSearch();
-  const [tables, setTables] = useState<ApiTableDefinition[]>([]);
-  const [reportsCount, setReportsCount] = useState(0);
+  const { user } = useAuth();
+  const dashboardMetricsKey = useMemo(
+    () => getDashboardMetricsKey(user.id, user.email),
+    [user.id, user.email]
+  );
+  const cachedDashboardMetrics = dashboardMetricsCache.get(dashboardMetricsKey);
+  const [tables, setTables] = useState<ApiTableDefinition[]>(() => cachedDashboardMetrics?.tables ?? []);
+  const [reportsCount, setReportsCount] = useState(() => cachedDashboardMetrics?.reportsCount ?? 0);
   const [selectedMetricKeys, setSelectedMetricKeys] = useState<MetricKey[]>([]);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [metricSearchQuery, setMetricSearchQuery] = useState('');
+  const [hasLoadedStoredMetrics, setHasLoadedStoredMetrics] = useState(false);
 
   useEffect(() => {
+    setHasLoadedStoredMetrics(false);
+
     try {
-      const stored = window.localStorage.getItem(DASHBOARD_METRICS_KEY);
-      if (!stored) return;
-      const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed)) {
-        setSelectedMetricKeys(parsed.filter((item): item is MetricKey => typeof item === 'string').slice(0, MAX_METRIC_CARDS));
-      }
+      const userStored = window.localStorage.getItem(dashboardMetricsKey);
+      const legacyStored = window.localStorage.getItem(DASHBOARD_METRICS_KEY);
+      const storedMetricKeys = parseStoredMetricKeys(userStored ?? legacyStored);
+      setSelectedMetricKeys(storedMetricKeys);
     } catch {
+      setSelectedMetricKeys([]);
       // ignore invalid local storage data
+    } finally {
+      setHasLoadedStoredMetrics(true);
     }
-  }, []);
+  }, [dashboardMetricsKey]);
 
   useEffect(() => {
-    window.localStorage.setItem(DASHBOARD_METRICS_KEY, JSON.stringify(selectedMetricKeys));
-  }, [selectedMetricKeys]);
+    if (!hasLoadedStoredMetrics) return;
+
+    window.localStorage.setItem(dashboardMetricsKey, JSON.stringify(selectedMetricKeys));
+  }, [dashboardMetricsKey, hasLoadedStoredMetrics, selectedMetricKeys]);
 
   useEffect(() => {
     let isMounted = true;
 
+    const cached = dashboardMetricsCache.get(dashboardMetricsKey);
+    if (cached) {
+      setTables(cached.tables);
+      setReportsCount(cached.reportsCount);
+      return () => {
+        isMounted = false;
+      };
+    }
+
     const loadData = async () => {
       try {
-        const [tableData, reports] = await Promise.all([
-          fetchTableDefinitions({ schema: 'public' }),
-          getReports(),
-        ]);
-
+        const data = await loadDashboardMetrics(dashboardMetricsKey);
         if (!isMounted) return;
-        setTables(tableData);
-        setReportsCount(reports.length);
+        setTables(data.tables);
+        setReportsCount(data.reportsCount);
       } catch {
         if (!isMounted) return;
         setTables([]);
@@ -121,7 +183,37 @@ export default function Dashboard() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [dashboardMetricsKey]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const reloadDashboardMetrics = async () => {
+      dashboardMetricsCache.delete(dashboardMetricsKey);
+      dashboardMetricsRequests.delete(dashboardMetricsKey);
+
+      try {
+        const data = await loadDashboardMetrics(dashboardMetricsKey);
+        if (!isMounted) return;
+        setTables(data.tables);
+        setReportsCount(data.reportsCount);
+      } catch {
+        if (!isMounted) return;
+        setTables([]);
+        setReportsCount(0);
+      }
+    };
+
+    const handleReportsChanged = () => {
+      void reloadDashboardMetrics();
+    };
+
+    window.addEventListener('reports:changed', handleReportsChanged);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('reports:changed', handleReportsChanged);
+    };
+  }, [dashboardMetricsKey]);
 
   const metricOptions = useMemo<MetricOption[]>(() => {
     const reportMetric: MetricOption = {
@@ -200,7 +292,6 @@ export default function Dashboard() {
             key={metric.key}
             label={metric.label}
             value={metric.value}
-            subtitle={metric.subtitle}
             onRemove={() => handleRemoveMetric(metric.key)}
           />
         ))}
@@ -278,12 +369,10 @@ export default function Dashboard() {
       )}
 
       <div className="mb-6">
-        <BarChart />
-      </div>
-
-      <div className="mb-6">
         <ReportsTable searchQuery={searchQuery} />
       </div>
     </div>
   );
 }
+
+

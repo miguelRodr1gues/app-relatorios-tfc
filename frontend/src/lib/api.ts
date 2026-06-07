@@ -5,7 +5,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 export interface ApiTableColumn {
     n: string;
     label: string;
-    type?: "text" | "number" | "date";
+    type: "text" | "number" | "date";
 }
 
 export interface ApiTableRelation {
@@ -18,33 +18,34 @@ export interface ApiTableRelation {
 
 export type ReportColumnInput =
     | string
-    | { n?: string; name?: string; key?: string; label?: string }
-    | { table?: string; column?: string };
+    | { n: string; name: string; key: string; label: string }
+    | { table: string; column: string };
+
+export type ReportFilterInput = Record<string, unknown>;
 
 export interface ApiTableDefinition {
     key: string;
-    schema?: string;
+    schema: string;
     name: string;
-    rows?: number;
-    cols?: number;
+    rows: number;
+    cols: number;
     columns: ApiTableColumn[];
-    related_tables?: ApiTableRelation[];
+    related_tables: ApiTableRelation[];
 }
 
 export interface SavedReport {
     id: string;
-    owner?: number | string;
+    owner: number | string;
     name: string;
-    description?: string;
-    base_table?: string;
+    description: string;
+    base_table: string;
     table: string;
-    related_tables?: string[];
+    related_tables: string[];
     columns: Array<string | { table: string; column: string }>;
-    filters?: any[];
-    created_at?: string;
-    file_json?: string | null;
-    file_csv?: string | null;
-    file_pdf?: string | null;
+    filters: ReportFilterInput[];
+    is_public: boolean;
+    record_count: number;
+    created_at: string;
 }
 
 export interface ReportPreviewResponse {
@@ -93,9 +94,9 @@ function flushRefreshQueue(error?: unknown) {
 api.interceptors.response.use(
     (response) => response,
     async (error) => {
-        const originalRequest = error.config as (typeof error.config & { _retry?: boolean });
-        const status = error?.response?.status;
-        const requestUrl = originalRequest?.url ?? "";
+        const originalRequest = error.config as (typeof error.config & { _retry: boolean });
+        const status = error.response.status;
+        const requestUrl = originalRequest.url ?? "";
 
         if (status !== 401 || !originalRequest || originalRequest._retry) {
             return Promise.reject(error);
@@ -137,26 +138,43 @@ api.interceptors.response.use(
     }
 );
 
+function extractApiErrorMessage(error: unknown, fallback: string) {
+    if (axios.isAxiosError(error)) {
+        const data = error.response.data;
+
+        if (typeof data === "string" && data.trim()) return data;
+
+        if (data && typeof data === "object") {
+            const payload = data as { error: unknown; detail: unknown };
+            if (typeof payload.error === "string" && payload.error.trim()) return payload.error;
+            if (typeof payload.detail === "string" && payload.detail.trim()) return payload.detail;
+        }
+    }
+
+    if (error instanceof Error && error.message) return error.message;
+    return fallback;
+}
+
 const normalizeTableDefinition = (rawTableDefinition: Partial<ApiTableDefinition> & {
     key: string;
-    name?: string;
-    columns?: ApiTableColumn[];
-    related_tables?: ApiTableRelation[];
+    name: string;
+    columns: ApiTableColumn[];
+    related_tables: ApiTableRelation[];
 }): ApiTableDefinition => ({
     key: rawTableDefinition.key,
     schema: rawTableDefinition.schema,
     name: rawTableDefinition.name,
     rows: Number.isFinite(rawTableDefinition.rows as number) ? Number(rawTableDefinition.rows) : 0,
-    cols: Number.isFinite(rawTableDefinition.cols as number) ? Number(rawTableDefinition.cols) : (rawTableDefinition.columns?.length || 0),
+    cols: Number.isFinite(rawTableDefinition.cols as number) ? Number(rawTableDefinition.cols) : (rawTableDefinition.columns.length || 0),
     columns: Array.isArray(rawTableDefinition.columns) ? rawTableDefinition.columns : [],
     related_tables: Array.isArray(rawTableDefinition.related_tables) ? rawTableDefinition.related_tables : [],
 });
 
-export async function fetchTableDefinitions(searchParams?: { q?: string; schema?: string }) {
+export async function fetchTableDefinitions(searchParams: { q?: string; schema?: string } = {}) {
     const response = await api.get<ApiTableDefinition[]>("/api/entities/", {
         params: {
-            q: searchParams?.q || undefined,
-            schema: searchParams?.schema || undefined,
+            q: searchParams.q || undefined,
+            schema: searchParams.schema || undefined,
         },
     });
 
@@ -165,8 +183,8 @@ export async function fetchTableDefinitions(searchParams?: { q?: string; schema?
 }
 
 export async function fetchSchemaExplorer(): Promise<SchemaTable[]> {
-    const response = await api.get<{ tables?: SchemaTable[] }>("/api/schema/");
-    const tables = response?.data?.tables;
+    const response = await api.get<{ tables: SchemaTable[] }>("/api/schema/");
+    const tables = response.data.tables;
     return Array.isArray(tables) ? tables : [];
 }
 
@@ -205,49 +223,40 @@ export async function downloadReport(reportId: string, exportFormat: "json" | "c
 
 export async function createReport(reportPayload: {
     name: string;
-    description?: string;
+    description: string;
     base_table: string;
-    related_tables?: string[];
+    related_tables: string[];
     columns: ReportColumnInput[];
-    filters?: any[];
-    generate_files?: boolean;
+    filters: ReportFilterInput[];
+    is_public: boolean;
+    generate_files: boolean;
 }) {
     try {
         const response = await api.post("/api/reports/", reportPayload);
         return response.data as SavedReport;
     } catch (error) {
-        if (error instanceof Error) {
-            throw error;
-        }
-
-        const axiosError = error as any;
-        if (axiosError?.response?.data?.error) {
-            throw new Error(axiosError.response.data.error);
-        }
-        if (axiosError?.response?.data?.detail) {
-            throw new Error(axiosError.response.data.detail);
-        }
-        if (axiosError?.message) {
-            throw new Error(axiosError.message);
-        }
-
-        throw new Error("Erro ao criar relatório");
+        throw new Error(extractApiErrorMessage(error, "Erro ao criar relatorio."));
     }
 }
 
 export async function previewReport(reportPayload: {
     base_table: string;
-    related_tables?: string[];
+    related_tables: string[];
     columns: ReportColumnInput[];
-    filters?: any[];
+    filters: ReportFilterInput[];
 }): Promise<ReportPreviewResponse> {
-    const response = await api.post<ReportPreviewResponse>("/api/reports/preview/", reportPayload);
-    return {
-        columns: Array.isArray(response.data?.columns) ? response.data.columns : [],
-        rows: Array.isArray(response.data?.rows) ? response.data.rows : [],
-        total_preview_rows: Number.isFinite(response.data?.total_preview_rows as number)
-            ? Number(response.data.total_preview_rows)
-            : 0,
-    };
-}
+    try {
+        const response = await api.post<ReportPreviewResponse>("/api/reports/preview/", reportPayload);
+        return {
+            columns: Array.isArray(response.data.columns) ? response.data.columns : [],
+            rows: Array.isArray(response.data.rows) ? response.data.rows : [],
+            total_preview_rows: Number.isFinite(response.data.total_preview_rows as number)
+                ? Number(response.data.total_preview_rows)
+                : 0,
+        };
+    } catch (error) {
+        throw new Error(extractApiErrorMessage(error, "Nao foi possivel carregar a pre-visualizacao."));
+    }
 
+
+}

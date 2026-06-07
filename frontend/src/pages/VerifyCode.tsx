@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/useAuth';
 import { KeyRound, Mail } from 'lucide-react';
 import AuthShell from '../components/AuthShell';
 import AuthInput from '../components/auth/AuthInput';

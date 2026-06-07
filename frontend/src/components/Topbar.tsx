@@ -1,15 +1,15 @@
-import { Search, Mail, Bell } from "lucide-react";
-import { useSearch } from "../context/SearchContext";
-import { useAuth } from "../context/AuthContext";
+import { Search } from "lucide-react";
+import { useSearch } from "../context/useSearch";
+import { useAuth } from "../context/useAuth";
 
 export default function Topbar() {
   const { searchQuery, setSearchQuery } = useSearch();
   const { user } = useAuth();
 
-  const displayName = user?.name;
-  const displayEmail = user?.email;
+  const displayName = user.name;
+  const displayEmail = user.email;
 
-  const initial = (user?.name || user?.email || "U")
+  const initial = (user.name || user.email || "U")
       .trim()
       .charAt(0)
       .toUpperCase();
@@ -34,15 +34,6 @@ export default function Topbar() {
 
         {/* RIGHT SIDE */}
         <div className="flex items-center gap-3">
-
-          <button className="w-10 h-10 rounded-full hover:bg-[#f9fafb] dark:hover:bg-[#3a3a3a] flex items-center justify-center">
-            <Mail className="w-5 h-5 text-[#6b7280]" />
-          </button>
-
-          <button className="w-10 h-10 rounded-full hover:bg-[#f9fafb] dark:hover:bg-[#3a3a3a] flex items-center justify-center relative">
-            <Bell className="w-5 h-5 text-[#6b7280]" />
-            <span className="absolute top-2 right-2 w-2 h-2 bg-[#ef4444] rounded-full" />
-          </button>
 
           {/* USER */}
           <div className="flex items-center gap-3 ml-3 pl-3 border-l border-[#f3f4f6] dark:border-[#3a3a3a]">

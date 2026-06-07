@@ -1,32 +1,28 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 import ReportWizard from "./ReportWizard";
-import { WizardProvider, useWizard } from "../context/WizardContext";
+import { WizardProvider } from "../context/WizardContext";
+import { useWizard } from "../context/useWizard";
 import { SearchProvider } from "../context/SearchContext";
 import { ThemeProvider } from "../context/ThemeContext";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 
 function LayoutContent() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [activeNav, setActiveNav] = useState("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { isOpen, openWizard, closeWizard } = useWizard();
   const { logout } = useAuth();
 
-  useEffect(() => {
-    const pathMap: Record<string, string> = {
-      "/dashboard": "dashboard",
-      "/relatorios": "relatorios",
-      "/estrutura": "estrutura",
-      "/analises": "analises",
-      "/settings": "settings",
-    };
-
-    setActiveNav(pathMap[location.pathname] || "dashboard");
-  }, [location.pathname]);
+  const pathMap: Record<string, string> = {
+    "/dashboard": "dashboard",
+    "/relatorios": "relatorios",
+    "/estrutura": "estrutura",
+    "/settings": "settings",
+  };
+  const activeNav = pathMap[location.pathname] || "dashboard";
 
   const handleNavChange = async (nav: string) => {
     if (nav === "logout") {
@@ -44,7 +40,6 @@ function LayoutContent() {
       dashboard: "/dashboard",
       relatorios: "/relatorios",
       estrutura: "/estrutura",
-      analises: "/analises",
       settings: "/settings",
     };
 

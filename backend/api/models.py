@@ -1,6 +1,5 @@
 from django.db import models
 from django.conf import settings
-import os
 import uuid as _uuid
 
 
@@ -51,26 +50,10 @@ class SavedReport(models.Model):
     related_tables = models.JSONField(default=list, blank=True)
     columns = models.JSONField(default=list)
     filters = models.JSONField(default=list, blank=True)
+    is_public = models.BooleanField(default=False)
+    record_count = models.PositiveBigIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
-
-    # Paths relative to BASE_DIR (strings) where generated files are saved
-    file_json = models.CharField(max_length=500, null=True, blank=True)
-    file_csv = models.CharField(max_length=500, null=True, blank=True)
-    file_pdf = models.CharField(max_length=500, null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at"]
-
-    def generated_dir(self):
-        from django.conf import settings as _s
-        return os.path.join(_s.BASE_DIR, "generated_reports")
-
-    def json_path(self):
-        return self.file_json
-
-    def csv_path(self):
-        return self.file_csv
-
-    def pdf_path(self):
-        return self.file_pdf
 

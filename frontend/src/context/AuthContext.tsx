@@ -120,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const verifyCode = useCallback(async ({ verificationToken, code }: VerifyCodePayload) => {
     try {
+
       await api.post("/api/auth/verify-code/", {
         verification_token: verificationToken,
         code,
@@ -133,7 +134,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loginWithGoogle = useCallback(async (token: string) => {
     try {
-      await api.post("/api/auth/google/", { token });
+      await api.post("/api/auth/google/", {
+        token,
+      });
+
       return await checkAuth();
     } catch {
       setUser(null);

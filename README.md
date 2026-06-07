@@ -1,31 +1,45 @@
 # App Relatórios TFC
 
-Stack full-stack com **Django + DRF** no backend, **React + TypeScript + Vite** no frontend, e duas bases de dados: **PostgreSQL** (dados da app) e **SQLite** (autenticação).
+Aplicação full-stack para criação, gestão, pré-visualização e exportação de relatórios.
 
----
+O projeto é composto por:
+
+- Backend: Django, Django REST Framework e JWT em cookies HTTP-only.
+- Frontend: React, TypeScript, Vite e Tailwind CSS.
+- Base de dados principal: PostgreSQL.
+- Base de dados de autenticação: SQLite local em `backend/auth.sqlite3`.
+- Autenticação: código por email e Google OAuth.
+- Exportações: CSV, JSON e PDF gerados em memória no momento do download.
 
 ## Índice
 
-1. [Pré-requisitos](#1-pré-requisitos)
-2. [Variáveis de ambiente](#2-variáveis-de-ambiente)
-3. [Subir o PostgreSQL](#3-subir-o-postgresql-docker)
-4. [Backend (Django)](#4-backend-django)
-5. [Frontend (React + Vite)](#5-frontend-react--vite)
-6. [Login (modo mock)](#6-login-modo-mock)
-7. [Troubleshooting](#7-troubleshooting)
-8. [Comandos rápidos](#8-comandos-rápidos-tldr)
+- [Requisitos](#requisitos)
+- [Estrutura](#estrutura)
+- [Variáveis De Ambiente](#variáveis-de-ambiente)
+- [Base De Dados](#base-de-dados)
+- [Backend](#backend)
+- [Frontend](#frontend)
+- [Autenticação](#autenticação)
+- [Exportação De Relatórios](#exportação-de-relatórios)
+- [Comandos De Validação](#comandos-de-validação)
+- [Troubleshooting](#troubleshooting)
+- [Setup Rápido](#setup-rápido)
+- [Notas De Segurança](#notas-de-segurança)
 
----
+## Requisitos
 
-## 1. Pré-requisitos
+Instala no ambiente onde vais correr a app:
 
-| Ferramenta | Versão mínima |
+| Ferramenta | Versão recomendada |
 |---|---|
-| Python | 3.11+ |
-| Node.js | 18+ |
-| Docker Desktop | qualquer recente |
+| Python | 3.12+ |
+| Node.js | 20.19+ ou 22 LTS |
+| npm | incluído com Node |
+| Docker Desktop | para PostgreSQL local |
+| PostgreSQL | 15+, se não usares Docker |
 
-Confirmar instalações:
+Verificação rápida:
+
 ```powershell
 python --version
 node -v
@@ -33,59 +47,103 @@ npm -v
 docker --version
 ```
 
----
+## Estrutura
 
-## 2. Variáveis de ambiente
+```text
+app-relatorios-tfc/
+  backend/
+    api/
+    core/
+    requirements.txt
+    manage.py
+    .env.example
+  frontend/
+    src/
+    package.json
+    package-lock.json
+    .env.example
+    .nvmrc
+  docker-compose.yml
+  .env.example
+  README.md
+```
 
-O projeto usa **dois** ficheiros `.env` separados.
+## Variáveis De Ambiente
 
-### `.env` — raiz do projeto (Docker / PostgreSQL)
+Existem três ficheiros de ambiente:
 
-Criar `./.env` ao lado do `docker-compose.yml`:
+- `.env`: usado pelo `docker-compose.yml` para criar o PostgreSQL.
+- `backend/.env`: usado pelo Django.
+- `frontend/.env`: usado pelo Vite/React.
+
+Os ficheiros reais `.env` não devem ser versionados. Usa os exemplos:
+
+```powershell
+copy .env.example .env
+copy backend\.env.example backend\.env
+copy frontend\.env.example frontend\.env
+```
+
+### Raiz Do Projeto
+
+Ficheiro: `.env`
 
 ```env
-POSTGRES_DB=app_db
-POSTGRES_USER=app_user
-POSTGRES_PASSWORD=app_password
+POSTGRES_DB=tfc_bd
+POSTGRES_USER=dev_user
+POSTGRES_PASSWORD=change-me
+POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=5432
 ```
 
-### `backend/.env` — configuração Django
+### Backend
 
-Criar `./backend/.env`:
+Ficheiro: `backend/.env`
 
 ```env
-DJANGO_SECRET_KEY=troca-por-uma-chave-segura
+DJANGO_SECRET_KEY=change-me
 DEBUG=True
 
-POSTGRES_DB=app_db
-POSTGRES_USER=app_user
-POSTGRES_PASSWORD=app_password
+POSTGRES_DB=tfc_bd
+POSTGRES_USER=dev_user
+POSTGRES_PASSWORD=change-me
 POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=5432
 
-# Email / SMTP (necessário para o código chegar ao email)
-# EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
-# EMAIL_HOST=smtp.gmail.com
-# EMAIL_PORT=587
-# EMAIL_USE_TLS=True
-# EMAIL_USE_SSL=False
-# EMAIL_HOST_USER=teu_email@example.com
-# EMAIL_HOST_PASSWORD=senha_da_app
-# DEFAULT_FROM_EMAIL=no-reply@teu-dominio.com
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
+EMAIL_USE_SSL=False
+EMAIL_HOST_USER=your-email@example.com
+EMAIL_HOST_PASSWORD=your-email-app-password
+DEFAULT_FROM_EMAIL="Ares do Pinhal <your-email@example.com>"
+
+OTP_CODE_EXPIRY_MINUTES=10
+OTP_CODE_LENGTH=6
 ```
 
-> Se estas variáveis de email não estiverem definidas, o Django pode ficar no backend de consola
-> e o código OTP vai aparecer no terminal em vez de ser enviado para a caixa de entrada.
+Gerar uma `DJANGO_SECRET_KEY`:
 
-> **Gerar uma secret key:**
-> ```powershell
-> python -c "import secrets; print(secrets.token_urlsafe(50))"
-> ```
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(50))"
+```
 
----
+### Frontend
 
-## 3. Executar o PostgreSQL (Docker)
+Ficheiro: `frontend/.env`
+
+```env
+VITE_API_BASE_URL=http://localhost:8000
+VITE_GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+```
+
+## Base De Dados
+
+### Opção Recomendada: Docker
 
 Na raiz do projeto:
 
@@ -93,16 +151,34 @@ Na raiz do projeto:
 docker compose up -d
 ```
 
+Verificar:
+
 ```powershell
-docker ps            # verificar container
-docker compose down  # parar
+docker ps
 ```
 
----
+Parar:
 
-## 4. Backend (Django)
+```powershell
+docker compose down
+```
 
-### 4.1 Criar e ativar o ambiente virtual
+### Nota Sobre As Bases De Dados
+
+O backend usa duas bases:
+
+- `default`: PostgreSQL, para dados da aplicação e relatórios.
+- `auth_db`: SQLite, para autenticação e utilizadores.
+
+O ficheiro SQLite é criado em:
+
+```text
+backend/auth.sqlite3
+```
+
+## Backend
+
+### 1. Criar Ambiente Virtual
 
 ```powershell
 cd backend
@@ -110,125 +186,260 @@ python -m venv venv
 .\venv\Scripts\Activate.ps1
 ```
 
-> Se o PowerShell bloquear scripts:
-> ```powershell
-> Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-> ```
+Se o PowerShell bloquear scripts:
 
-### 4.2 Instalar dependências
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+### 2. Instalar Dependências
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-### 4.3 Executar migrações (multi-DB)
+O ficheiro `backend/requirements.txt` contém as dependências necessárias para correr o backend:
 
-O projeto usa dois routers:
-- `default` → PostgreSQL
-- `auth_db` → SQLite (`backend/auth.sqlite3`)
+- Django
+- Django REST Framework
+- Simple JWT
+- django-cors-headers
+- django-environ
+- dj-rest-auth
+- django-allauth
+- google-auth
+- requests
+- psycopg2-binary
+- reportlab
+
+### 3. Migrar Base De Dados
+
+Como o projeto usa mais do que uma base de dados, executa as migrações explicitamente:
 
 ```powershell
 python manage.py migrate --database=auth_db
 python manage.py migrate --database=default
 ```
 
-> ⚠️ Não usar `migrate` sem `--database` — as tabelas ficam no sítio errado.
-
-### 4.4 Criar superutilizador
+### 4. Criar Superutilizador
 
 ```powershell
 python manage.py createsuperuser --database=auth_db
 ```
 
-### 4.5 Arrancar o servidor
+### 5. Correr Backend
 
 ```powershell
 python manage.py runserver 127.0.0.1:8000
 ```
 
+URLs úteis:
+
 | URL | Descrição |
 |---|---|
-| http://127.0.0.1:8000/admin/ | Painel de administração |
-| http://127.0.0.1:8000/ | API base |
+| `http://127.0.0.1:8000/admin/` | Django Admin |
+| `http://127.0.0.1:8000/api/auth/user/` | Estado de autenticação |
+| `http://127.0.0.1:8000/api/reports/` | Relatórios |
 
----
+## Frontend
 
-## 5. Frontend (React + Vite)
-
-### 5.1 Instalar dependências
+### 1. Instalar Dependências
 
 ```powershell
 cd frontend
-npm ci    # usa o package-lock.json — preferível a npm install para setups limpos
+npm ci
 ```
 
-> O design depende de `tailwindcss`, `@radix-ui/*`, `lucide-react`, `tailwind-merge` e componentes em `src/components/ui/` (padrão shadcn).
+Usa `npm ci` para instalações limpas e reproduzíveis com base no `package-lock.json`.
 
-### 5.2 Arrancar o servidor de desenvolvimento
+### 2. Correr Frontend
 
 ```powershell
 npm run dev
 ```
 
-Abrir: http://127.0.0.1:5173/
+Abrir:
 
-### 5.3 Build de produção
+```text
+http://localhost:5173
+```
+
+### 3. Build De Produção
 
 ```powershell
 npm run build
 npm run preview
 ```
 
----
+## Autenticação
 
-## 6. Login (modo mock)
+### Login Por Email
 
-A autenticação do frontend está em modo **mock** via `frontend/src/context/AuthContext.tsx`.
+Fluxo:
 
-| Campo | Valor |
-|---|---|
-| Email | `admin@aresdopinhal.pt` |
-| Password | `Admin` |
+1. O utilizador introduz o email.
+2. O backend cria um código OTP.
+3. O código é enviado por SMTP.
+4. O utilizador introduz o código.
+5. O backend cria cookies JWT HTTP-only.
+6. O frontend valida a sessão em `/api/auth/user/`.
 
-**Fluxo:** `/` → redireciona para `/login` → após login, redireciona para `/dashboard` (guardado em `localStorage`).
+Para funcionar noutro ambiente, configura no `backend/.env`:
 
----
+- `EMAIL_HOST`
+- `EMAIL_PORT`
+- `EMAIL_USE_TLS`
+- `EMAIL_HOST_USER`
+- `EMAIL_HOST_PASSWORD`
+- `DEFAULT_FROM_EMAIL`
 
-## 7. Troubleshooting
+Se usares Gmail, cria uma App Password e usa essa password no `EMAIL_HOST_PASSWORD`.
 
-**Frontend não instala / versões erradas**
-```powershell
-Remove-Item -Recurse -Force node_modules
-npm ci
+### Login Com Google
+
+Configuração necessária:
+
+1. Criar OAuth Client no Google Cloud Console.
+2. Tipo: Web application.
+3. Adicionar origem autorizada:
+
+```text
+http://localhost:5173
 ```
 
-**Postgres — connection refused**
-- Confirmar que o Docker está a correr: `docker ps`
-- Verificar `POSTGRES_HOST=127.0.0.1` no `backend/.env`
-- Confirmar que a porta é consistente nos dois ficheiros `.env`
+4. Colocar o Client ID em:
 
-**`OperationalError: server closed the connection unexpectedly`**
-
-O Postgres ainda não arrancou ou está a reiniciar. Ver logs:
-```powershell
-docker logs <nome-do-container>
+```env
+VITE_GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_ID=...
 ```
 
-**Tabelas em falta (só aparecem migrations)**
-```powershell
-python manage.py migrate --database=auth_db
-python manage.py migrate --database=default
+5. Colocar o Client Secret em:
+
+```env
+GOOGLE_CLIENT_SECRET=...
 ```
 
----
+O valor de `VITE_GOOGLE_CLIENT_ID` e `GOOGLE_CLIENT_ID` deve ser o mesmo Web Client ID.
 
-## 8. Comandos rápidos (tl;dr)
+## Exportação De Relatórios
+
+Os formatos suportados são:
+
+- JSON
+- CSV
+- PDF
+
+Os ficheiros são gerados em memória no momento da exportação e enviados diretamente na resposta HTTP. Não são guardados no servidor nem na base de dados.
+
+## Comandos De Validação
+
+Backend:
 
 ```powershell
-# 1. Postgres
+cd backend
+.\venv\Scripts\Activate.ps1
+python manage.py check
+python manage.py test
+```
+
+Frontend:
+
+```powershell
+cd frontend
+npm run lint
+npm run build
+```
+
+Verificar dependências Python:
+
+```powershell
+cd backend
+.\venv\Scripts\python.exe -m pip check
+```
+
+## Troubleshooting
+
+### `POSTGRES connection refused`
+
+Verificar se o container está ativo:
+
+```powershell
+docker ps
+```
+
+Confirmar no `backend/.env`:
+
+```env
+POSTGRES_HOST=127.0.0.1
+POSTGRES_PORT=5432
+```
+
+### `Couldn't import Django`
+
+Ativar o ambiente virtual:
+
+```powershell
+cd backend
+.\venv\Scripts\Activate.ps1
+```
+
+Instalar dependências:
+
+```powershell
+pip install -r requirements.txt
+```
+
+### Login Por Email Não Avança Para O Código
+
+Verificar:
+
+- backend está a correr em `http://127.0.0.1:8000`
+- `frontend/.env` tem `VITE_API_BASE_URL=http://localhost:8000`
+- SMTP está configurado no `backend/.env`
+- consola do backend não mostra erro de envio de email
+
+### Google Mostra `404. That's an error.`
+
+Normalmente indica configuração errada do Google OAuth.
+
+Verificar:
+
+- `VITE_GOOGLE_CLIENT_ID` é um Web Client ID válido.
+- origem autorizada no Google Cloud inclui `http://localhost:5173`.
+- não foi usado Client ID de Android, iOS ou outro tipo.
+- frontend foi reiniciado depois de alterar `frontend/.env`.
+
+### CORS Ou Cookies Não Funcionam
+
+Confirmar em `backend/core/settings.py`:
+
+```python
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+]
+
+CORS_ALLOW_CREDENTIALS = True
+```
+
+Confirmar que o frontend chama a API com:
+
+```env
+VITE_API_BASE_URL=http://localhost:8000
+```
+
+## Setup Rápido
+
+```powershell
+# 1. Preparar envs
+copy .env.example .env
+copy backend\.env.example backend\.env
+copy frontend\.env.example frontend\.env
+
+# 2. Base de dados
 docker compose up -d
 
-# 2. Backend
+# 3. Backend
 cd backend
 python -m venv venv
 .\venv\Scripts\Activate.ps1
@@ -237,8 +448,15 @@ python manage.py migrate --database=auth_db
 python manage.py migrate --database=default
 python manage.py runserver 127.0.0.1:8000
 
-# 3. Frontend
+# 4. Frontend, noutro terminal
 cd frontend
 npm ci
 npm run dev
 ```
+
+## Notas De Segurança
+
+- Não publicar ficheiros `.env` reais.
+- Não colocar passwords SMTP, Google secrets ou `DJANGO_SECRET_KEY` no Git.
+- Em produção, configurar `DEBUG=False`.
+- Em produção, configurar cookies seguros (`JWT_COOKIE_SECURE=True`) e usar HTTPS.

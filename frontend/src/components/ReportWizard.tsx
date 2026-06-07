@@ -523,7 +523,7 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
   const progress = ((currentStep - 1) / (STEPS.length - 1)) * 100;
   const cancelConfirmModal = showCancelConfirm && typeof document !== 'undefined'
     ? createPortal(
-        <div className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/35 px-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[100000] flex h-screen w-screen items-center justify-center bg-black/40 px-4 backdrop-blur-sm">
           <div className="w-full max-w-[460px] rounded-[28px] border border-[#e8ecf0] bg-white p-6 shadow-[0_24px_70px_rgba(15,23,42,0.22)] dark:border-[#3a3a3a] dark:bg-[#242424]">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -1132,6 +1132,7 @@ export default function ReportWizard({ isOpen, onClose }: ReportWizardProps) {
             </div>
           </div>
         </div>
+
       </div>
       </div>
       {cancelConfirmModal}

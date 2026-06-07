@@ -25,34 +25,42 @@ export default function Login() {
     const nonce = Math.random().toString(36).slice(2);
 
     const googleAuthUrl =
-      `https://accounts.google.com/o/oauth2/v2/auth` +
-      `client_id=${encodeURIComponent(clientId)}` +
-      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-      `&response_type=token%20id_token` +
-      `&response_mode=fragment` +
-      `&scope=${encodeURIComponent(scope)}` +
-      `&nonce=${encodeURIComponent(nonce)}` +
-      `&prompt=select_account`;
+        `https://accounts.google.com/o/oauth2/v2/auth?` +
+        `client_id=${encodeURIComponent(clientId)}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&response_type=${encodeURIComponent('token id_token')}` +
+        `&response_mode=fragment` +
+        `&scope=${encodeURIComponent(scope)}` +
+        `&nonce=${encodeURIComponent(nonce)}` +
+        `&prompt=select_account`;
 
     window.location.href = googleAuthUrl;
   };
 
   useEffect(() => {
-    const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
+    const hash = window.location.hash.startsWith('#')
+        ? window.location.hash.slice(1)
+        : '';
+
     const params = new URLSearchParams(hash);
-    const token = params.get('id_token') || params.get('access_token');
+    const token = params.get('id_token');
 
     if (!token) return;
 
     (async () => {
       setError('');
       setSocialLoading('google');
+
       const ok = await loginWithGoogle(token);
+
       setSocialLoading(null);
       window.history.replaceState(null, '', '/login');
 
-      if (ok) navigate('/dashboard', { replace: true });
-      else setError('Não foi possível entrar com Google');
+      if (ok) {
+        navigate('/dashboard', { replace: true });
+      } else {
+        setError('Não foi possível entrar com Google');
+      }
     })();
   }, [loginWithGoogle, navigate]);
 
@@ -63,77 +71,81 @@ export default function Login() {
 
     const normalizedEmail = email.trim().toLowerCase();
     const challenge = await requestLoginCode(normalizedEmail);
+
     setLoading(false);
 
     if (challenge.verificationToken) {
       navigate(
-        `/verify-codetoken=${encodeURIComponent(challenge.verificationToken)}&email=${encodeURIComponent(challenge.email)}&purpose=login`,
-        { replace: true }
+          `/verify-code?token=${encodeURIComponent(
+              challenge.verificationToken
+          )}&email=${encodeURIComponent(challenge.email)}&purpose=login`,
+          { replace: true }
       );
-    } else {
-      if (challenge.error) {
-        setError(challenge.error);
-        return;
-      }
-
-      setError('Não foi possível enviar o código. Confirma o email.');
+      return;
     }
+
+    if (challenge.error) {
+      setError(challenge.error);
+      return;
+    }
+
+    setError('Não foi possível enviar o código. Confirma o email.');
   };
 
   return (
-    <AuthShell
-      subtitle="Faça login para aceder ao dashboard"
-      footer={
-        <div className="text-center">
-          <Link to="/register" className="text-[14px] text-[#2d6a4f] hover:underline font-semibold">
-            Ainda não tem conta Registe-se
-          </Link>
-        </div>
-      }
-    >
-      <div className="space-y-3 mb-6">
-        <AuthSocialButton
-          type="button"
-          onClick={handleGoogleLogin}
-          disabled={loading || !!socialLoading}
-          icon={
-            socialLoading === 'google' ? (
-              <div className="w-5 h-5 border-2 border-[#2d6a4f] border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <FcGoogle className="w-5 h-5" />
-            )
+      <AuthShell
+          subtitle="Faça login para aceder ao dashboard"
+          footer={
+            <div className="text-center">
+              <Link
+                  to="/register"
+                  className="text-[14px] text-[#2d6a4f] hover:underline font-semibold"
+              >
+                Ainda não tem conta? Registe-se
+              </Link>
+            </div>
           }
-        >
-          <span>Continuar com Google</span>
-        </AuthSocialButton>
-      </div>
+      >
+        <div className="space-y-3 mb-6">
+          <AuthSocialButton
+              type="button"
+              onClick={handleGoogleLogin}
+              disabled={loading || !!socialLoading}
+              icon={
+                socialLoading === 'google' ? (
+                    <div className="w-5 h-5 border-2 border-[#2d6a4f] border-t-transparent rounded-full animate-spin" />
+                ) : (
+                    <FcGoogle className="w-5 h-5" />
+                )
+              }
+          >
+            <span>Continuar com Google</span>
+          </AuthSocialButton>
+        </div>
 
-      <AuthDivider />
+        <AuthDivider />
 
-      <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on">
-        <AuthInput
-          icon={<Mail className="w-5 h-5" />}
-          type="email"
-          name="email"
-          autoComplete="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="Email"
-        />
+        <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on">
+          <AuthInput
+              icon={<Mail className="w-5 h-5" />}
+              type="email"
+              name="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Email"
+          />
 
-        {error && (
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/50 rounded-full px-4 py-3 text-[13px] text-red-700 dark:text-red-400 text-center">
-            {error}
-          </div>
-        )}
+          {error && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/50 rounded-full px-4 py-3 text-[13px] text-red-700 dark:text-red-400 text-center">
+                {error}
+              </div>
+          )}
 
-        <AuthPrimaryButton
-          type="submit"
-          disabled={loading || !!socialLoading}
-        >
-          Continuar
-        </AuthPrimaryButton>
-      </form>
-    </AuthShell>
+          <AuthPrimaryButton type="submit" disabled={loading || !!socialLoading}>
+            Continuar
+          </AuthPrimaryButton>
+        </form>
+      </AuthShell>
   );
 }

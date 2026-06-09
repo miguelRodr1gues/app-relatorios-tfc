@@ -93,6 +93,17 @@ class AuthenticationFlowTests(BaseAPITestCase):
 
         self.assertIn(response.status_code, [401, 403])
 
+    def test_authenticated_user_can_update_display_name(self):
+        user = self.authenticate(self.create_user(email="profile@example.com"))
+
+        response = self.client.patch("/api/auth/user/", {"name": "Maria Silva"}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["name"], "Maria Silva")
+        user.refresh_from_db(using="auth_db")
+        self.assertEqual(user.first_name, "Maria")
+        self.assertEqual(user.last_name, "Silva")
+
     @patch("api.views.verify_google_id_token")
     def test_google_login_creates_session_for_valid_google_token(self, verify_google_id_token):
         verify_google_id_token.return_value = SimpleNamespace(

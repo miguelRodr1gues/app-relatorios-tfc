@@ -1,4 +1,5 @@
 import secrets
+import threading
 from datetime import timedelta
 from smtplib import SMTPAuthenticationError
 
@@ -102,6 +103,26 @@ def _send_code_email(email: str, code: str, purpose: str) -> None:
     email_message.send(fail_silently=False)
 
 
+def _send_code_email_after_response(email: str, code: str, purpose: str) -> None:
+    if "locmem" in settings.EMAIL_BACKEND:
+        _send_code_email(email, code, purpose)
+        return
+
+    def send_email():
+        try:
+            _send_code_email(email, code, purpose)
+        except Exception as exc:
+            print(f"Erro ao enviar codigo de verificacao para {email}: {exc}")
+
+    transaction.on_commit(
+        lambda: threading.Thread(
+            target=send_email,
+            name=f"otp-email-{purpose}",
+            daemon=True,
+        ).start()
+    )
+
+
 def _issue_jwt_response(user: User):
     refresh_token = RefreshToken.for_user(user)
     response = JsonResponse({"success": True, "user": UserSerializer(user).data})
@@ -169,7 +190,7 @@ class RegisterView(APIView):
                     payload={"first_name": first_name, "last_name": last_name},
                     expires_at=timezone.now() + timedelta(minutes=settings.OTP_CODE_EXPIRY_MINUTES),
                 )
-                _send_code_email(email, verification_code, OTPChallenge.PURPOSE_REGISTER)
+                _send_code_email_after_response(email, verification_code, OTPChallenge.PURPOSE_REGISTER)
                 return _challenge_response(challenge)
         except SMTPAuthenticationError:
             return Response(
@@ -201,7 +222,7 @@ class LoginEmailView(APIView):
                     code_hash=make_password(verification_code),
                     expires_at=timezone.now() + timedelta(minutes=settings.OTP_CODE_EXPIRY_MINUTES),
                 )
-                _send_code_email(email, verification_code, OTPChallenge.PURPOSE_LOGIN)
+                _send_code_email_after_response(email, verification_code, OTPChallenge.PURPOSE_LOGIN)
                 return _challenge_response(challenge)
         except SMTPAuthenticationError:
             return Response(
@@ -342,4 +363,15 @@ class UserMeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        return Response(UserSerializer(request.user).data)
+
+    def patch(self, request):
+        full_name = str(request.data.get("name", "")).strip()
+        if not full_name:
+            return Response({"error": "O nome e obrigatorio."}, status=400)
+
+        first_name, _, last_name = full_name.partition(" ")
+        request.user.first_name = first_name.strip()
+        request.user.last_name = last_name.strip()
+        request.user.save(update_fields=["first_name", "last_name"])
         return Response(UserSerializer(request.user).data)

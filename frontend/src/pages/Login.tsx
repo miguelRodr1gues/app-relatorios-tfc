@@ -72,19 +72,19 @@ export default function Login() {
     const normalizedEmail = email.trim().toLowerCase();
     const challenge = await requestLoginCode(normalizedEmail);
 
-    setLoading(false);
-
-    if (challenge.verificationToken) {
+    if (challenge?.verificationToken) {
       navigate(
           `/verify-code?token=${encodeURIComponent(
               challenge.verificationToken
-          )}&email=${encodeURIComponent(challenge.email)}&purpose=login`,
+          )}&email=${encodeURIComponent(challenge.email ?? normalizedEmail)}&purpose=login`,
           { replace: true }
       );
       return;
     }
 
-    if (challenge.error) {
+    setLoading(false);
+
+    if (challenge?.error) {
       setError(challenge.error);
       return;
     }
@@ -142,7 +142,7 @@ export default function Login() {
               </div>
           )}
 
-          <AuthPrimaryButton type="submit" disabled={loading || !!socialLoading}>
+          <AuthPrimaryButton type="submit" disabled={loading || !!socialLoading} loadingLabel="A enviar código...">
             Continuar
           </AuthPrimaryButton>
         </form>

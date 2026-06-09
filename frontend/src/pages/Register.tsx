@@ -27,7 +27,7 @@ export default function Register() {
     const nonce = Math.random().toString(36).slice(2);
 
     const googleAuthUrl =
-      `https://accounts.google.com/o/oauth2/v2/auth` +
+      `https://accounts.google.com/o/oauth2/v2/auth?` +
       `client_id=${encodeURIComponent(clientId)}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&response_type=token%20id_token` +
@@ -78,8 +78,8 @@ export default function Register() {
         email: normalizedEmail,
       });
 
-      if (!challenge.verificationToken) {
-        if (challenge.error) {
+      if (!challenge?.verificationToken) {
+        if (challenge?.error) {
           setError(challenge.error);
           return;
         }
@@ -89,7 +89,7 @@ export default function Register() {
       }
 
       navigate(
-          `/verify-codetoken=${encodeURIComponent(challenge.verificationToken)}&email=${encodeURIComponent(challenge.email)}&purpose=register&first_name=${encodeURIComponent(normalizedFirstName)}&last_name=${encodeURIComponent(normalizedLastName)}`,
+          `/verify-code?token=${encodeURIComponent(challenge.verificationToken)}&email=${encodeURIComponent(challenge.email ?? normalizedEmail)}&purpose=register&first_name=${encodeURIComponent(normalizedFirstName)}&last_name=${encodeURIComponent(normalizedLastName)}`,
           { replace: true }
       );
     } catch {
@@ -169,6 +169,7 @@ export default function Register() {
         <AuthPrimaryButton
           type="submit"
           disabled={loading || !!socialLoading}
+          loadingLabel="A enviar código..."
         >
           Continuar
         </AuthPrimaryButton>

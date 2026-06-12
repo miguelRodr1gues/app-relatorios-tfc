@@ -220,6 +220,7 @@ export default function Estrutura() {
               panOnScroll
               zoomOnScroll
               zoomOnPinch
+              proOptions={{ hideAttribution: true }}
               className="bg-[#fafafa] dark:bg-[#0b0b0b]"
             >
               <Background gap={18} size={1} color="#e5e7eb" />

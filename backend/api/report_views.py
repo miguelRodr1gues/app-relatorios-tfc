@@ -32,6 +32,11 @@ from .report_sql import (
 from .serializers import SavedReportSerializer
 
 
+def _quote_table_identifier(schema_name: str, table_name: str) -> str:
+    quote_name = connection.ops.quote_name
+    return f"{quote_name(schema_name)}.{quote_name(table_name)}"
+
+
 class EntityListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -60,6 +65,13 @@ class EntityListAPIView(APIView):
             """
             cursor.execute(table_summary_sql, [schema_name])
             table_summary_rows = cursor.fetchall()
+            table_row_counts = {}
+            for table_schema_name, table_name, estimated_rows in table_summary_rows:
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM {_quote_table_identifier(table_schema_name, table_name)}")
+                    table_row_counts[(table_schema_name, table_name)] = int(cursor.fetchone()[0] or 0)
+                except Exception:
+                    table_row_counts[(table_schema_name, table_name)] = int(estimated_rows or 0)
 
             table_columns_sql = """
                 SELECT
@@ -147,7 +159,7 @@ class EntityListAPIView(APIView):
                     "key": table_key,
                     "schema": table_schema_name,
                     "name": table_label,
-                    "rows": int(estimated_rows or 0),
+                    "rows": table_row_counts.get((table_schema_name, table_name), int(estimated_rows or 0)),
                     "cols": len(table_columns),
                     "columns": table_columns,
                     "related_tables": list(relations_by_table.get(table_key, {}).values()),

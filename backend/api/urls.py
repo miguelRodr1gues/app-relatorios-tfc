@@ -27,10 +27,6 @@ urlpatterns = [
     path("auth/refresh/", RefreshView.as_view(), name="refresh"),
     path("auth/user/", UserMeView.as_view(), name="auth-user"),
 
-    # dj-rest-auth compatible aliases
-    path("dj-rest-auth/google/login/", GoogleLoginView.as_view(), name="dj-rest-auth-google-login"),
-    path("dj-rest-auth/token/refresh/", RefreshView.as_view(), name="dj-rest-auth-token-refresh"),
-
     # API
     path("entities/", EntityListAPIView.as_view(), name="entities"),
     path("schema/", SchemaAPIView.as_view(), name="schema"),

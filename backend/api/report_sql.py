@@ -92,6 +92,48 @@ def _validate_filter_values(selected_filters, allowed_columns_by_table):
     return None
 
 
+def _build_filter_sql_parts(selected_filters, allowed_columns_by_table, sql_alias_by_table=None):
+    where_sql_parts = []
+    query_params = []
+    sql_alias_by_table = sql_alias_by_table or {}
+
+    for selected_filter in selected_filters:
+        if not isinstance(selected_filter, dict):
+            continue
+
+        table_key = selected_filter.get("table")
+        column_name = selected_filter.get("column")
+        filter_operator = (selected_filter.get("operator") or "=").upper()
+        filter_value = selected_filter.get("value")
+
+        if not table_key or not column_name or filter_value in [None, ""]:
+            continue
+
+        if table_key not in allowed_columns_by_table or column_name not in allowed_columns_by_table[table_key]:
+            continue
+
+        column_prefix = f'{sql_alias_by_table[table_key]}.' if table_key in sql_alias_by_table else ""
+
+        if filter_operator == "=":
+            where_sql_parts.append(f'{column_prefix}"{column_name}" = %s')
+            query_params.append(filter_value)
+        elif filter_operator == "!=":
+            where_sql_parts.append(f'{column_prefix}"{column_name}" != %s')
+            query_params.append(filter_value)
+        elif filter_operator in {">", "<", ">=", "<="}:
+            where_sql_parts.append(f'{column_prefix}"{column_name}" {filter_operator} %s')
+            query_params.append(filter_value)
+        elif filter_operator == "LIKE":
+            where_sql_parts.append(f'{column_prefix}"{column_name}" LIKE %s')
+            query_params.append(f"%{filter_value}%")
+        elif filter_operator == "IN" and isinstance(filter_value, list) and filter_value:
+            in_placeholders_sql = ",".join(["%s"] * len(filter_value))
+            where_sql_parts.append(f'{column_prefix}"{column_name}" IN ({in_placeholders_sql})')
+            query_params.extend(filter_value)
+
+    return where_sql_parts, query_params
+
+
 def _get_direct_table_relations(table_key: str):
     schema_name, table_name = _split_table_key(table_key)
 
@@ -260,30 +302,11 @@ def _fetch_relational_report_rows(report):
             f"LEFT JOIN {_quote_table_ref(related_table_key)} {related_table_alias} ON {join_condition_sql}"
         )
 
-    where_sql_parts = []
-    query_params = []
-    for selected_filter in selected_filters:
-        source_table_alias = sql_alias_by_table[selected_filter["table"]]
-        source_column_name = selected_filter["column"]
-        filter_operator = (selected_filter.get("operator") or "=").upper()
-        filter_value = selected_filter.get("value")
-
-        if filter_operator == "=":
-            where_sql_parts.append(f'{source_table_alias}."{source_column_name}" = %s')
-            query_params.append(filter_value)
-        elif filter_operator == "!=":
-            where_sql_parts.append(f'{source_table_alias}."{source_column_name}" != %s')
-            query_params.append(filter_value)
-        elif filter_operator in {">", "<", ">=", "<="}:
-            where_sql_parts.append(f'{source_table_alias}."{source_column_name}" {filter_operator} %s')
-            query_params.append(filter_value)
-        elif filter_operator == "LIKE":
-            where_sql_parts.append(f'{source_table_alias}."{source_column_name}" LIKE %s')
-            query_params.append(f"%{filter_value}%")
-        elif filter_operator == "IN" and isinstance(filter_value, list) and filter_value:
-            in_placeholders_sql = ",".join(["%s"] * len(filter_value))
-            where_sql_parts.append(f'{source_table_alias}."{source_column_name}" IN ({in_placeholders_sql})')
-            query_params.extend(filter_value)
+    where_sql_parts, query_params = _build_filter_sql_parts(
+        selected_filters,
+        allowed_columns_by_table,
+        sql_alias_by_table,
+    )
 
     where_clause_sql = f"WHERE {' AND '.join(where_sql_parts)}" if where_sql_parts else ""
     join_clause_sql = " ".join(join_sql_parts)
@@ -310,7 +333,7 @@ def _fetch_single_table_rows(report):
     schema_name, table_name = _split_table_key(base_table_key)
 
     selected_columns = _normalize_report_columns(report.columns or [], base_table_key)
-    selected_filters = getattr(report, "filters", []) or []
+    _, _, _, selected_filters = _build_report_query_definition(report)
 
     print(f"[DEBUG] _fetch_single_table_rows - Table: {base_table_key}, Schema: {schema_name}, Columns requested: {selected_columns}")
 
@@ -334,27 +357,10 @@ def _fetch_single_table_rows(report):
 
     select_columns_sql = ", ".join([f'"{column_name}"' for column_name in valid_column_names])
     from_table_sql = _quote_table_ref(base_table_key)
-    where_sql_parts = []
-    query_params = []
-
-    for selected_filter in selected_filters:
-        if not isinstance(selected_filter, dict):
-            continue
-        filter_column_name = selected_filter.get("column")
-        filter_operator = (selected_filter.get("operator") or "=").upper()
-        filter_value = selected_filter.get("value")
-        if filter_column_name not in allowed_column_names:
-            continue
-        if filter_operator == "=":
-            where_sql_parts.append(f'"{filter_column_name}" = %s')
-            query_params.append(filter_value)
-        elif filter_operator == "LIKE":
-            where_sql_parts.append(f'"{filter_column_name}" LIKE %s')
-            query_params.append(filter_value)
-        elif filter_operator == "IN" and isinstance(filter_value, list) and filter_value:
-            in_placeholders_sql = ",".join(["%s"] * len(filter_value))
-            where_sql_parts.append(f'"{filter_column_name}" IN ({in_placeholders_sql})')
-            query_params.extend(filter_value)
+    where_sql_parts, query_params = _build_filter_sql_parts(
+        selected_filters,
+        {base_table_key: allowed_column_names},
+    )
 
     where_clause_sql = f"WHERE {' AND '.join(where_sql_parts)}" if where_sql_parts else ""
     report_query_sql = f"SELECT {select_columns_sql} FROM {from_table_sql} {where_clause_sql} LIMIT 10000"
@@ -433,30 +439,11 @@ def _count_relational_report_rows(report):
             f"LEFT JOIN {_quote_table_ref(related_table_key)} {related_table_alias} ON {join_condition_sql}"
         )
 
-    where_sql_parts = []
-    query_params = []
-    for selected_filter in selected_filters:
-        source_table_alias = sql_alias_by_table[selected_filter["table"]]
-        source_column_name = selected_filter["column"]
-        filter_operator = (selected_filter.get("operator") or "=").upper()
-        filter_value = selected_filter.get("value")
-
-        if filter_operator == "=":
-            where_sql_parts.append(f'{source_table_alias}."{source_column_name}" = %s')
-            query_params.append(filter_value)
-        elif filter_operator == "!=":
-            where_sql_parts.append(f'{source_table_alias}."{source_column_name}" != %s')
-            query_params.append(filter_value)
-        elif filter_operator in {">", "<", ">=", "<="}:
-            where_sql_parts.append(f'{source_table_alias}."{source_column_name}" {filter_operator} %s')
-            query_params.append(filter_value)
-        elif filter_operator == "LIKE":
-            where_sql_parts.append(f'{source_table_alias}."{source_column_name}" LIKE %s')
-            query_params.append(f"%{filter_value}%")
-        elif filter_operator == "IN" and isinstance(filter_value, list) and filter_value:
-            in_placeholders_sql = ",".join(["%s"] * len(filter_value))
-            where_sql_parts.append(f'{source_table_alias}."{source_column_name}" IN ({in_placeholders_sql})')
-            query_params.extend(filter_value)
+    where_sql_parts, query_params = _build_filter_sql_parts(
+        selected_filters,
+        allowed_columns_by_table,
+        sql_alias_by_table,
+    )
 
     where_clause_sql = f"WHERE {' AND '.join(where_sql_parts)}" if where_sql_parts else ""
     join_clause_sql = " ".join(join_sql_parts)
@@ -477,37 +464,11 @@ def _count_single_table_rows(report):
     if not allowed_column_names:
         return 0, "Tabela base inválida."
 
-    selected_filters = getattr(report, "filters", []) or []
-    where_sql_parts = []
-    query_params = []
-
-    for selected_filter in selected_filters:
-        if not isinstance(selected_filter, dict):
-            continue
-
-        filter_column_name = selected_filter.get("column")
-        filter_operator = (selected_filter.get("operator") or "=").upper()
-        filter_value = selected_filter.get("value")
-
-        if filter_column_name not in allowed_column_names:
-            continue
-
-        if filter_operator == "=":
-            where_sql_parts.append(f'"{filter_column_name}" = %s')
-            query_params.append(filter_value)
-        elif filter_operator == "!=":
-            where_sql_parts.append(f'"{filter_column_name}" != %s')
-            query_params.append(filter_value)
-        elif filter_operator in {">", "<", ">=", "<="}:
-            where_sql_parts.append(f'"{filter_column_name}" {filter_operator} %s')
-            query_params.append(filter_value)
-        elif filter_operator == "LIKE":
-            where_sql_parts.append(f'"{filter_column_name}" LIKE %s')
-            query_params.append(filter_value)
-        elif filter_operator == "IN" and isinstance(filter_value, list) and filter_value:
-            in_placeholders_sql = ",".join(["%s"] * len(filter_value))
-            where_sql_parts.append(f'"{filter_column_name}" IN ({in_placeholders_sql})')
-            query_params.extend(filter_value)
+    _, _, _, selected_filters = _build_report_query_definition(report)
+    where_sql_parts, query_params = _build_filter_sql_parts(
+        selected_filters,
+        {base_table_key: allowed_column_names},
+    )
 
     where_clause_sql = f"WHERE {' AND '.join(where_sql_parts)}" if where_sql_parts else ""
     count_query_sql = f"SELECT COUNT(*) FROM {_quote_table_ref(base_table_key)} {where_clause_sql}".strip()

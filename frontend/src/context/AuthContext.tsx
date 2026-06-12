@@ -1,5 +1,5 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../lib/api";
+import { api, extractApiErrorMessage } from "../lib/api";
 import {
   AuthChallenge,
   AuthContext,
@@ -10,16 +10,6 @@ import {
 } from "./AuthContextCore";
 
 type UnknownRecord = Record<string, unknown>;
-
-type ApiErrorShape = {
-  response: {
-    data: string | {
-      error: string;
-      detail: string;
-    };
-  };
-  message: string;
-};
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null;
@@ -40,22 +30,6 @@ function mapUser(data: unknown): User {
     email,
     avatar: asString(userData.avatar, asString(userData.picture)) || undefined,
   };
-}
-
-function extractErrorMessage(error: unknown, fallback: string) {
-  const apiError = error as ApiErrorShape;
-  const data = apiError.response.data;
-
-  if (typeof data === "string" && data.trim()) {
-    return data;
-  }
-
-  if (isRecord(data)) {
-    if (typeof data.error === "string" && data.error.trim()) return data.error;
-    if (typeof data.detail === "string" && data.detail.trim()) return data.detail;
-  }
-
-  return apiError.message || fallback;
 }
 
 function normalizeChallenge(data: unknown): AuthChallenge | null {
@@ -100,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data } = await api.post("/api/auth/login/", { email });
       return normalizeChallenge(data);
     } catch (error: unknown) {
-      return { error: extractErrorMessage(error, "Nao foi possivel enviar o codigo.") };
+      return { error: extractApiErrorMessage(error, "Nao foi possivel enviar o codigo.") };
     }
   }, []);
 
@@ -114,13 +88,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       return normalizeChallenge(data);
     } catch (error: unknown) {
-      return { error: extractErrorMessage(error, "Nao foi possivel criar a conta.") };
+      return { error: extractApiErrorMessage(error, "Nao foi possivel criar a conta.") };
     }
   }, []);
 
   const verifyCode = useCallback(async ({ verificationToken, code }: VerifyCodePayload) => {
     try {
-
       await api.post("/api/auth/verify-code/", {
         verification_token: verificationToken,
         code,

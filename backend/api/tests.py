@@ -1,15 +1,32 @@
-import json
+﻿import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core import mail
-from django.test import override_settings
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import OTPChallenge, SavedReport
+from .report_exports import _build_csv_bytes, _build_json_bytes, _format_pdf_column_label, _set_download_response_headers
+from .report_services import (
+    _build_preview_report_definition,
+    _build_report_query_definition,
+    _build_report_request_payload,
+    _compose_table_key,
+    _guess_column_type,
+    _humanize_identifier,
+    _normalize_report_column,
+    _normalize_report_columns,
+    _normalize_report_filters,
+    _normalize_related_tables,
+    _normalize_table_key,
+    _split_table_key,
+)
+from .report_sql import _build_filter_sql_parts
+from .serializers import LoginEmailRequestSerializer, RegisterStartSerializer, SavedReportSerializer, UserSerializer, VerifyCodeSerializer
 
 User = get_user_model()
 
@@ -312,3 +329,353 @@ class OTPChallengeModelTests(BaseAPITestCase):
 
         self.assertTrue(challenge.is_expired())
         self.assertTrue(challenge.is_consumed())
+
+
+class OTPChallengeUnitTests(TestCase):
+    databases = {"auth_db"}
+
+    def create_challenge(self, **overrides):
+        defaults = {
+            "email": "otp-unit@example.com",
+            "purpose": OTPChallenge.PURPOSE_LOGIN,
+            "code_hash": "hash",
+            "expires_at": timezone.now() + timezone.timedelta(minutes=5),
+        }
+        defaults.update(overrides)
+        return OTPChallenge.objects.using("auth_db").create(**defaults)
+
+    def test_is_expired_returns_true_when_expiry_is_in_the_past(self):
+        challenge = self.create_challenge(expires_at=timezone.now() - timezone.timedelta(seconds=1))
+
+        self.assertTrue(challenge.is_expired())
+
+    def test_is_expired_returns_false_when_expiry_is_in_the_future(self):
+        challenge = self.create_challenge(expires_at=timezone.now() + timezone.timedelta(minutes=1))
+
+        self.assertFalse(challenge.is_expired())
+
+    def test_is_consumed_returns_true_when_consumed_at_exists(self):
+        challenge = self.create_challenge(consumed_at=timezone.now())
+
+        self.assertTrue(challenge.is_consumed())
+
+    def test_is_consumed_returns_false_when_consumed_at_is_none(self):
+        challenge = self.create_challenge(consumed_at=None)
+
+        self.assertFalse(challenge.is_consumed())
+
+
+class SavedReportModelUnitTests(TestCase):
+    databases = {"auth_db"}
+
+    def create_user(self, email="report-owner@example.com"):
+        return User.objects.db_manager("auth_db").create_user(
+            username=email.split("@")[0],
+            email=email,
+            first_name="Report",
+            last_name="Owner",
+            is_active=True,
+        )
+
+    def test_saved_report_persists_all_configured_fields(self):
+        owner = self.create_user()
+        related_tables = ["activitiescafe", "public.users"]
+        columns = [
+            {"table": "activities", "column": "id"},
+            {"table": "activitiescafe", "column": "acqtd"},
+        ]
+        filters = [{"table": "activities", "column": "status", "operator": "=", "value": "ativo"}]
+
+        report = SavedReport.objects.using("auth_db").create(
+            owner=owner,
+            name="Relatorio unitario",
+            table="activities",
+            related_tables=related_tables,
+            columns=columns,
+            filters=filters,
+            record_count=42,
+            is_public=True,
+        )
+
+        saved_report = SavedReport.objects.using("auth_db").get(id=report.id)
+        self.assertEqual(saved_report.owner, owner)
+        self.assertEqual(saved_report.name, "Relatorio unitario")
+        self.assertEqual(saved_report.table, "activities")
+        self.assertEqual(saved_report.related_tables, related_tables)
+        self.assertEqual(saved_report.columns, columns)
+        self.assertEqual(saved_report.filters, filters)
+        self.assertEqual(saved_report.record_count, 42)
+        self.assertTrue(saved_report.is_public)
+
+    def test_saved_report_is_private_by_default(self):
+        report = SavedReport.objects.using("auth_db").create(
+            owner=self.create_user("private@example.com"),
+            name="Privado",
+            table="activities",
+            columns=[{"table": "activities", "column": "id"}],
+        )
+
+        self.assertFalse(report.is_public)
+
+    def test_saved_report_can_be_saved_as_private_explicitly(self):
+        report = SavedReport.objects.using("auth_db").create(
+            owner=self.create_user("explicit-private@example.com"),
+            name="Privado explicito",
+            table="activities",
+            columns=[{"table": "activities", "column": "id"}],
+            is_public=False,
+        )
+
+        self.assertFalse(report.is_public)
+
+
+class SerializerUnitTests(TestCase):
+    databases = {"auth_db"}
+
+    def test_register_start_serializer_accepts_valid_payload(self):
+        serializer = RegisterStartSerializer(
+            data={"first_name": "Maria", "last_name": "Silva", "email": "maria@example.com"}
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_register_start_serializer_rejects_invalid_email(self):
+        serializer = RegisterStartSerializer(
+            data={"first_name": "Maria", "last_name": "Silva", "email": "invalid-email"}
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("email", serializer.errors)
+
+    def test_login_email_request_serializer_rejects_invalid_email(self):
+        serializer = LoginEmailRequestSerializer(data={"email": "not-an-email"})
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("email", serializer.errors)
+
+    def test_verify_code_serializer_accepts_six_digit_code(self):
+        serializer = VerifyCodeSerializer(
+            data={"verification_token": "8a72ec7a-7b52-4ec7-8f4b-c03c2d8b92d1", "code": "123456"}
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_verify_code_serializer_rejects_short_code(self):
+        serializer = VerifyCodeSerializer(
+            data={"verification_token": "8a72ec7a-7b52-4ec7-8f4b-c03c2d8b92d1", "code": "12345"}
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("code", serializer.errors)
+
+    def test_user_serializer_prefers_full_name(self):
+        user = User.objects.db_manager("auth_db").create_user(
+            username="maria",
+            email="maria@example.com",
+            first_name="Maria",
+            last_name="Silva",
+        )
+
+        self.assertEqual(UserSerializer(user).data["name"], "Maria Silva")
+
+    def test_user_serializer_falls_back_to_username_without_email_domain(self):
+        user = User.objects.db_manager("auth_db").create_user(username="fallback", email="fallback@example.com")
+
+        self.assertEqual(UserSerializer(user).data["name"], "fallback")
+
+    def test_saved_report_serializer_exposes_base_table_alias(self):
+        owner = User.objects.db_manager("auth_db").create_user(username="owner", email="owner@example.com")
+        report = SavedReport.objects.using("auth_db").create(
+            owner=owner,
+            name="Serializado",
+            table="activities",
+            columns=[{"table": "activities", "column": "id"}],
+        )
+
+        data = SavedReportSerializer(report).data
+
+        self.assertEqual(data["base_table"], "activities")
+        self.assertEqual(data["table"], "activities")
+
+
+class ReportServiceHelperUnitTests(TestCase):
+    def test_humanize_identifier_replaces_underscores_and_title_cases(self):
+        self.assertEqual(_humanize_identifier("utente_nome"), "Utente Nome")
+
+    def test_guess_column_type_maps_numeric_date_and_text_values(self):
+        self.assertEqual(_guess_column_type("integer", ""), "number")
+        self.assertEqual(_guess_column_type("timestamp without time zone", ""), "date")
+        self.assertEqual(_guess_column_type("boolean", ""), "text")
+        self.assertEqual(_guess_column_type("character varying", "varchar"), "text")
+
+    def test_split_and_compose_table_key_handle_public_and_custom_schema(self):
+        self.assertEqual(_split_table_key("custom.activities"), ("custom", "activities"))
+        self.assertEqual(_split_table_key("activities"), ("public", "activities"))
+        self.assertEqual(_compose_table_key("public", "activities"), "activities")
+        self.assertEqual(_compose_table_key("custom", "activities"), "custom.activities")
+
+    def test_normalize_table_key_rejects_non_string_values(self):
+        self.assertEqual(_normalize_table_key(None), "")
+        self.assertEqual(_normalize_table_key(123), "")
+
+    def test_normalize_report_column_accepts_string_and_dict_shapes(self):
+        self.assertEqual(_normalize_report_column("activities.id"), "id")
+        self.assertEqual(_normalize_report_column("activities::status"), "status")
+        self.assertEqual(_normalize_report_column({"column": "acqtd"}), "acqtd")
+        self.assertEqual(_normalize_report_column({"n": "created_at"}), "created_at")
+
+    def test_normalize_report_columns_discards_invalid_entries(self):
+        columns = _normalize_report_columns(
+            ["activities.id", {"table": "activitiescafe", "column": "acqtd"}, {"table": "", "column": ""}, None],
+            "activities",
+        )
+
+        self.assertEqual(
+            columns,
+            [
+                {"table": "activities", "column": "id"},
+                {"table": "activitiescafe", "column": "acqtd"},
+            ],
+        )
+
+    def test_normalize_report_filters_discards_incomplete_filters(self):
+        filters = _normalize_report_filters(
+            [
+                {"column": "status", "operator": "=", "value": "ativo"},
+                {"column": ""},
+                "invalid",
+            ],
+            "activities",
+        )
+
+        self.assertEqual(filters, [{"table": "activities", "column": "status", "operator": "=", "value": "ativo"}])
+
+    def test_normalize_related_tables_removes_duplicates_and_invalid_values(self):
+        self.assertEqual(
+            _normalize_related_tables(["activitiescafe", "activitiescafe", None, "custom.users"]),
+            ["activitiescafe", "custom.users"],
+        )
+
+    def test_build_report_request_payload_normalizes_report_input(self):
+        payload = _build_report_request_payload(
+            {
+                "base_table": "activities",
+                "related_tables": ["activitiescafe", "activitiescafe"],
+                "columns": ["activities.id", {"table": "activitiescafe", "column": "acqtd"}],
+                "filters": [{"column": "status", "operator": "=", "value": "ativo"}],
+            }
+        )
+
+        self.assertEqual(payload["base_table_key"], "activities")
+        self.assertEqual(payload["selected_related_table_keys"], ["activitiescafe"])
+        self.assertEqual(payload["normalized_columns"][0], {"table": "activities", "column": "id"})
+        self.assertEqual(payload["normalized_filters"], [{"table": "activities", "column": "status", "operator": "=", "value": "ativo"}])
+
+    def test_build_preview_report_definition_returns_namespace_for_query_layer(self):
+        report_definition = _build_preview_report_definition(
+            {
+                "base_table_key": "activities",
+                "selected_related_table_keys": ["activitiescafe"],
+                "normalized_columns": [{"table": "activities", "column": "id"}],
+                "normalized_filters": [],
+            }
+        )
+
+        self.assertEqual(report_definition.table, "activities")
+        self.assertEqual(report_definition.related_tables, ["activitiescafe"])
+        self.assertEqual(report_definition.columns, [{"table": "activities", "column": "id"}])
+        self.assertEqual(report_definition.filters, [])
+
+    def test_build_report_query_definition_normalizes_saved_report_like_object(self):
+        report = SimpleNamespace(
+            table="activities",
+            related_tables=["activitiescafe", "activitiescafe"],
+            columns=["activities.id", {"table": "activitiescafe", "column": "acqtd"}],
+            filters=[{"column": "status", "operator": "=", "value": "ativo"}],
+        )
+
+        base_table, related_tables, columns, filters = _build_report_query_definition(report)
+
+        self.assertEqual(base_table, "activities")
+        self.assertEqual(related_tables, ["activitiescafe"])
+        self.assertEqual(columns[1], {"table": "activitiescafe", "column": "acqtd"})
+        self.assertEqual(filters, [{"table": "activities", "column": "status", "operator": "=", "value": "ativo"}])
+
+    def test_build_filter_sql_parts_builds_id_equality_filter(self):
+        where_sql_parts, query_params = _build_filter_sql_parts(
+            [{"table": "activities", "column": "id", "operator": "=", "value": "12"}],
+            {"activities": ["id", "status"]},
+        )
+
+        self.assertEqual(where_sql_parts, ['"id" = %s'])
+        self.assertEqual(query_params, ["12"])
+
+    def test_build_filter_sql_parts_uses_table_alias_for_relational_filters(self):
+        where_sql_parts, query_params = _build_filter_sql_parts(
+            [{"table": "activities", "column": "id", "operator": "=", "value": "12"}],
+            {"activities": ["id"]},
+            {"activities": "t0"},
+        )
+
+        self.assertEqual(where_sql_parts, ['t0."id" = %s'])
+        self.assertEqual(query_params, ["12"])
+
+    def test_build_filter_sql_parts_supports_numeric_comparison_and_like(self):
+        where_sql_parts, query_params = _build_filter_sql_parts(
+            [
+                {"table": "activities", "column": "id", "operator": ">=", "value": "10"},
+                {"table": "activities", "column": "descricao", "operator": "LIKE", "value": "consulta"},
+            ],
+            {"activities": ["id", "descricao"]},
+        )
+
+        self.assertEqual(where_sql_parts, ['"id" >= %s', '"descricao" LIKE %s'])
+        self.assertEqual(query_params, ["10", "%consulta%"])
+
+    def test_build_filter_sql_parts_ignores_invalid_or_empty_filters(self):
+        where_sql_parts, query_params = _build_filter_sql_parts(
+            [
+                {"table": "activities", "column": "missing", "operator": "=", "value": "1"},
+                {"table": "activities", "column": "id", "operator": "=", "value": ""},
+                {"table": "", "column": "id", "operator": "=", "value": "1"},
+            ],
+            {"activities": ["id"]},
+        )
+
+        self.assertEqual(where_sql_parts, [])
+        self.assertEqual(query_params, [])
+
+
+class ReportExportHelperUnitTests(TestCase):
+    def test_build_csv_bytes_uses_semicolon_delimiter_and_utf8_bom(self):
+        csv_bytes = _build_csv_bytes(["id", "nome"], [{"id": 1, "nome": "Maria"}])
+
+        self.assertTrue(csv_bytes.startswith(b"\xef\xbb\xbf"))
+        self.assertIn(b"id;nome", csv_bytes)
+        self.assertIn(b"1;Maria", csv_bytes)
+
+    def test_build_csv_bytes_writes_empty_value_for_missing_column(self):
+        csv_bytes = _build_csv_bytes(["id", "nome"], [{"id": 1}])
+
+        self.assertIn(b"1;", csv_bytes)
+
+    def test_build_json_bytes_outputs_pretty_utf8_json(self):
+        json_bytes = _build_json_bytes([{"nome": "Maria", "total": 2}])
+        decoded = json_bytes.decode("utf-8")
+
+        self.assertIn('"nome": "Maria"', decoded)
+        self.assertIn('"total": 2', decoded)
+        self.assertTrue(decoded.startswith("[\n"))
+
+    def test_format_pdf_column_label_humanizes_table_prefixed_column(self):
+        self.assertEqual(_format_pdf_column_label("utente.utente_nome"), "Utente nome")
+        self.assertEqual(_format_pdf_column_label("created-at"), "Created at")
+        self.assertEqual(_format_pdf_column_label(""), "")
+
+    def test_set_download_response_headers_sets_content_disposition_and_exposed_header(self):
+        response = {}
+
+        _set_download_response_headers(response, "relatorio.csv")
+
+        self.assertEqual(response["Content-Disposition"], 'attachment; filename="relatorio.csv"')
+        self.assertEqual(response["Access-Control-Expose-Headers"], "Content-Disposition")

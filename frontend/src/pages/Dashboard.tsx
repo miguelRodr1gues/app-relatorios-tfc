@@ -16,7 +16,6 @@ type MetricOption = {
   key: MetricKey;
   label: string;
   value: string;
-  subtitle: string;
 };
 
 type DashboardMetricsData = {
@@ -29,6 +28,12 @@ const dashboardMetricsRequests = new Map<string, Promise<DashboardMetricsData>>(
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat('pt-PT').format(value);
+}
+
+function parseMetricValue(value: string) {
+  const normalized = value.replace(/[^\d-]/g, '');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function getDashboardMetricsKey(userId: string, email: string) {
@@ -220,14 +225,12 @@ export default function Dashboard() {
       key: 'report_count',
       label: 'Relatórios criados',
       value: formatNumber(reportsCount),
-      subtitle: 'total de relatórios',
     };
 
     const tableMetrics = tables.map((table) => ({
       key: `table:${table.key}` as MetricKey,
       label: table.name,
       value: formatNumber(table.rows ?? 0),
-      subtitle: `${formatNumber(table.rows ?? 0)} registos`,
     }));
 
     return [reportMetric, ...tableMetrics];
@@ -249,7 +252,7 @@ export default function Dashboard() {
 
     return baseOptions.filter((option) =>
       option.label.toLowerCase().includes(normalizedQuery) ||
-      option.subtitle.toLowerCase().includes(normalizedQuery)
+      option.value.toLowerCase().includes(normalizedQuery)
     );
   }, [metricOptions, metricSearchQuery, selectedMetricKeys]);
 
@@ -347,7 +350,6 @@ export default function Dashboard() {
                     className="text-left rounded-xl border border-[#e5e7eb] dark:border-[#3a3a3a] bg-[#fafafa] dark:bg-[#1a1a1a] p-5 hover:border-[#2d6a4f] transition-all"
                   >
                     <div className="text-[15px] font-semibold text-[#1f2937] dark:text-white">{metric.label}</div>
-                    <div className="text-[13px] text-[#6b7280] dark:text-[#9ca3af] mt-2">{metric.subtitle}</div>
                   </button>
                 ) : (
                   <TableCard
@@ -355,10 +357,9 @@ export default function Dashboard() {
                     table={{
                       key: metric.key,
                       name: metric.label,
-                      rows: Number(metric.value.replace(/\./g, '')),
+                      rows: parseMetricValue(metric.value),
                       cols: 0,
                     }}
-                    subtitle={metric.subtitle}
                     onClick={() => handleAddMetric(metric.key)}
                   />
                 )

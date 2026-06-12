@@ -12,7 +12,9 @@ interface TableCardProps {
 
 export default function TableCard({ table, isSelected = false, subtitle, onClick }: TableCardProps) {
   const safeCols = table.cols ?? 0;
-  const defaultSubtitle = `${safeCols} colunas`;
+  const defaultSubtitle = typeof table.rows === 'number'
+    ? `${table.rows.toLocaleString('pt-PT')} registos`
+    : `${safeCols} colunas`;
 
   return (
     <div
